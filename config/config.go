@@ -20,13 +20,13 @@ const (
 
 // Config represents the application configuration
 type Config struct {
-	Server      ServerConfig      `yaml:"server"`
-	OpenFGA     OpenFGAConfig     `yaml:"openfga"`
-	Backend     BackendConfig     `yaml:"backend"`
-	Logging     LoggingConfig     `yaml:"logging"`
+	Server        ServerConfig        `yaml:"server"`
+	OpenFGA       OpenFGAConfig       `yaml:"openfga"`
+	Backend       BackendConfig       `yaml:"backend"`
+	Logging       LoggingConfig       `yaml:"logging"`
 	Observability ObservabilityConfig `yaml:"observability"`
-	Service     ServiceConfig     `yaml:"service"`
-	Leadership  LeadershipConfig  `yaml:"leadership"`
+	Service       ServiceConfig       `yaml:"service"`
+	Leadership    LeadershipConfig    `yaml:"leadership"`
 }
 
 // ServerConfig contains server-specific configuration
@@ -75,10 +75,16 @@ type MetricsConfig struct {
 
 // ServiceConfig contains service-specific configuration
 type ServiceConfig struct {
-	PollInterval time.Duration `yaml:"poll_interval" env:"POLL_INTERVAL"`
-	BatchSize    int32         `yaml:"batch_size" env:"BATCH_SIZE"`
-	MaxRetries   int           `yaml:"max_retries" env:"MAX_RETRIES"`
-	RetryDelay   time.Duration `yaml:"retry_delay" env:"RETRY_DELAY"`
+	PollInterval     time.Duration `yaml:"poll_interval" env:"POLL_INTERVAL"`
+	BatchSize        int32         `yaml:"batch_size" env:"BATCH_SIZE"`
+	MaxRetries       int           `yaml:"max_retries" env:"MAX_RETRIES"`
+	RetryDelay       time.Duration `yaml:"retry_delay" env:"RETRY_DELAY"`
+	MaxChanges       int           `yaml:"max_changes" env:"MAX_CHANGES"`
+	RequestTimeout   time.Duration `yaml:"request_timeout" env:"REQUEST_TIMEOUT"`
+	MaxRetryDelay    time.Duration `yaml:"max_retry_delay" env:"MAX_RETRY_DELAY"`
+	BackoffFactor    float64       `yaml:"backoff_factor" env:"BACKOFF_FACTOR"`
+	RateLimitDelay   time.Duration `yaml:"rate_limit_delay" env:"RATE_LIMIT_DELAY"`
+	EnableValidation bool          `yaml:"enable_validation" env:"ENABLE_VALIDATION"`
 }
 
 // LeadershipConfig contains leader election configuration
@@ -116,10 +122,16 @@ func DefaultConfig() *Config {
 			},
 		},
 		Service: ServiceConfig{
-			PollInterval: 5 * time.Second,
-			BatchSize:    100,
-			MaxRetries:   3,
-			RetryDelay:   1 * time.Second,
+			PollInterval:     5 * time.Second,
+			BatchSize:        100,
+			MaxRetries:       3,
+			RetryDelay:       1 * time.Second,
+			MaxChanges:       0, // No limit by default
+			RequestTimeout:   30 * time.Second,
+			MaxRetryDelay:    5 * time.Second,
+			BackoffFactor:    2.0,
+			RateLimitDelay:   50 * time.Millisecond,
+			EnableValidation: true,
 		},
 		Leadership: LeadershipConfig{
 			Enabled:   false,
@@ -254,6 +266,36 @@ func loadFromEnv(config *Config) error {
 			config.Service.RetryDelay = r
 		}
 	}
+	if maxChanges := os.Getenv("MAX_CHANGES"); maxChanges != "" {
+		if m, err := strconv.Atoi(maxChanges); err == nil {
+			config.Service.MaxChanges = m
+		}
+	}
+	if requestTimeout := os.Getenv("REQUEST_TIMEOUT"); requestTimeout != "" {
+		if r, err := time.ParseDuration(requestTimeout); err == nil {
+			config.Service.RequestTimeout = r
+		}
+	}
+	if maxRetryDelay := os.Getenv("MAX_RETRY_DELAY"); maxRetryDelay != "" {
+		if m, err := time.ParseDuration(maxRetryDelay); err == nil {
+			config.Service.MaxRetryDelay = m
+		}
+	}
+	if backoffFactor := os.Getenv("BACKOFF_FACTOR"); backoffFactor != "" {
+		if b, err := strconv.ParseFloat(backoffFactor, 64); err == nil {
+			config.Service.BackoffFactor = b
+		}
+	}
+	if rateLimitDelay := os.Getenv("RATE_LIMIT_DELAY"); rateLimitDelay != "" {
+		if r, err := time.ParseDuration(rateLimitDelay); err == nil {
+			config.Service.RateLimitDelay = r
+		}
+	}
+	if enableValidation := os.Getenv("ENABLE_VALIDATION"); enableValidation != "" {
+		if e, err := strconv.ParseBool(enableValidation); err == nil {
+			config.Service.EnableValidation = e
+		}
+	}
 
 	// Leadership configuration
 	if enabled := os.Getenv("LEADERSHIP_ENABLED"); enabled != "" {
@@ -311,6 +353,27 @@ func (c *Config) validate() error {
 	}
 	if c.Service.BatchSize <= 0 {
 		errors = append(errors, "service.batch_size must be positive")
+	}
+	if c.Service.MaxRetries < 0 {
+		errors = append(errors, "service.max_retries must be non-negative")
+	}
+	if c.Service.RetryDelay < 0 {
+		errors = append(errors, "service.retry_delay must be non-negative")
+	}
+	if c.Service.MaxChanges < 0 {
+		errors = append(errors, "service.max_changes must be non-negative")
+	}
+	if c.Service.RequestTimeout <= 0 {
+		errors = append(errors, "service.request_timeout must be positive")
+	}
+	if c.Service.MaxRetryDelay < 0 {
+		errors = append(errors, "service.max_retry_delay must be non-negative")
+	}
+	if c.Service.BackoffFactor <= 0 {
+		errors = append(errors, "service.backoff_factor must be positive")
+	}
+	if c.Service.RateLimitDelay < 0 {
+		errors = append(errors, "service.rate_limit_delay must be non-negative")
 	}
 
 	if len(errors) > 0 {

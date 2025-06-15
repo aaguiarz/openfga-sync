@@ -23,25 +23,25 @@ service:
   poll_interval: "10s"
   batch_size: 50
 `
-	
+
 	// Create temporary config file
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	defer os.Remove(tmpFile.Name())
-	
+
 	if _, err := tmpFile.WriteString(yamlContent); err != nil {
 		t.Fatalf("Failed to write to temp file: %v", err)
 	}
 	tmpFile.Close()
-	
+
 	// Load config
 	cfg, err := LoadConfig(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify YAML values
 	if cfg.Server.Port != 9090 {
 		t.Errorf("Expected port 9090, got %d", cfg.Server.Port)
@@ -68,16 +68,16 @@ func TestEnvironmentVariableOverrides(t *testing.T) {
 		os.Unsetenv("OPENFGA_ENDPOINT")
 		os.Unsetenv("OPENFGA_STORE_ID")
 		os.Unsetenv("BACKEND_DSN")
-		os.Unsetenv("BACKEND_MODE") 
+		os.Unsetenv("BACKEND_MODE")
 		os.Unsetenv("POLL_INTERVAL")
 	}()
-	
+
 	// Load config (will use defaults + env vars)
 	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify environment variable overrides
 	if cfg.OpenFGA.Endpoint != "https://env.openfga.com" {
 		t.Errorf("Expected endpoint from env var, got %s", cfg.OpenFGA.Endpoint)
@@ -95,18 +95,18 @@ func TestConfigValidation(t *testing.T) {
 	// Set required fields for validation
 	cfg.OpenFGA.StoreID = "test-store-id"
 	cfg.Backend.DSN = "postgres://test:test@localhost/test"
-	
+
 	// Test valid config
 	if err := cfg.validate(); err != nil {
 		t.Errorf("Default config should be valid, got error: %v", err)
 	}
-	
+
 	// Test invalid storage mode
 	cfg.Backend.Mode = "invalid"
 	if err := cfg.validate(); err == nil {
 		t.Error("Expected validation error for invalid storage mode")
 	}
-	
+
 	// Test missing required fields
 	cfg = DefaultConfig()
 	cfg.OpenFGA.Endpoint = ""
@@ -117,7 +117,7 @@ func TestConfigValidation(t *testing.T) {
 
 func TestStorageModeMethods(t *testing.T) {
 	cfg := DefaultConfig()
-	
+
 	cfg.Backend.Mode = StorageModeChangelog
 	if !cfg.IsChangelogMode() {
 		t.Error("Expected IsChangelogMode() to return true")
@@ -125,7 +125,7 @@ func TestStorageModeMethods(t *testing.T) {
 	if cfg.IsStatefulMode() {
 		t.Error("Expected IsStatefulMode() to return false")
 	}
-	
+
 	cfg.Backend.Mode = StorageModeStateful
 	if cfg.IsChangelogMode() {
 		t.Error("Expected IsChangelogMode() to return false")

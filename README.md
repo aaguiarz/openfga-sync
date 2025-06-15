@@ -1,89 +1,310 @@
 # OpenFGA Sync Service
 
-A Go service that consumes OpenFGA `/changes` API and writes changes to a database for auditing, analytics, or replication purposes.
+A comprehensive Go service that consumes OpenFGA `/changes` API and synchronizes authorization data to databases for auditing, analytics, replication, and compliance purposes.
 
 ## Features
 
-- Consumes OpenFGA changes API with continuation token support
-- Writes changes to PostgreSQL database
-- Configurable via YAML configuration file
-- Structured logging with configurable levels
-- Graceful shutdown handling
-- Automatic database schema initialization
+### Core Functionality
+- **OpenFGA Integration**: Consumes changes API with advanced pagination and continuation token support
+- **Multi-Storage Support**: PostgreSQL with planned MySQL and SQLite support
+- **Dual Storage Modes**: 
+  - **Changelog mode**: Append-only audit trail of all changes
+  - **Stateful mode**: Current state representation for efficient queries
+- **Configuration Management**: YAML files with environment variable overrides
+- **Production Ready**: Graceful shutdown, automatic schema initialization, comprehensive error handling
+
+### Enhanced Fetcher Capabilities
+- **Intelligent Parsing**: Automatic user/object type extraction (e.g., "employee:alice" → type="employee", id="alice")
+- **Retry Logic**: Exponential backoff with configurable parameters
+- **Rate Limiting**: Built-in request throttling to respect API limits
+- **Statistics Tracking**: Real-time metrics on requests, latency, and success rates
+- **Raw JSON Preservation**: Complete audit trail with original OpenFGA responses
+- **Change Validation**: Comprehensive validation of change events
+- **Paging Support**: Advanced pagination with configurable page sizes and limits
+
+### Observability & Operations
+- **Structured Logging**: JSON/text formats with configurable levels
+- **Health Endpoints**: Ready for Kubernetes health checks
+- **Metrics**: Prometheus-compatible metrics endpoint
+- **OpenTelemetry**: Distributed tracing support (planned)
+- **Leader Election**: Kubernetes-native HA support (planned)
 
 ## Architecture
 
-The service is organized into the following components:
+The service follows a clean architecture pattern with clear separation of concerns:
 
-- **`main.go`**: Entry point with configuration parsing and service orchestration
-- **`config/`**: Configuration management with YAML support
-- **`fetcher/`**: OpenFGA API client for fetching changes
-- **`storage/`**: Database storage adapters (currently PostgreSQL)
+### Core Components
+- **`main.go`**: Service orchestration, signal handling, and startup logic
+- **`config/`**: Configuration management with YAML/environment variable support
+- **`fetcher/`**: Enhanced OpenFGA client with retry logic, parsing, and statistics
+- **`storage/`**: Database adapters with dual storage modes
+
+### Storage Modes
+
+#### Changelog Mode (`changelog`)
+- **Table**: `fga_changelog` 
+- **Purpose**: Complete audit trail of all authorization changes
+- **Schema**: Stores every change event with timestamps, change types, and raw JSON
+- **Use Cases**: Compliance, audit trails, change analysis, debugging
+
+#### Stateful Mode (`stateful`)
+- **Table**: `fga_tuples`
+- **Purpose**: Current state representation for efficient queries
+- **Schema**: Maintains only the current authorization relationships
+- **Use Cases**: Authorization queries, data replication, performance optimization
+
+### Change Event Structure
+
+Each change event contains both structured and raw data:
+
+```go
+type ChangeEvent struct {
+    // Structured fields (parsed from OpenFGA)
+    ObjectType string    `json:"object_type"`  // e.g., "document"
+    ObjectID   string    `json:"object_id"`    // e.g., "readme.md"
+    Relation   string    `json:"relation"`     // e.g., "viewer"
+    UserType   string    `json:"user_type"`    // e.g., "employee"
+    UserID     string    `json:"user_id"`      // e.g., "alice"
+    ChangeType string    `json:"change_type"`  // "tuple_write" or "tuple_delete"
+    Timestamp  time.Time `json:"timestamp"`    // When the change occurred
+    RawJSON    string    `json:"raw_json"`     // Original OpenFGA response
+}
+```
 
 ## Configuration
+
+The service supports comprehensive configuration through YAML files with environment variable overrides. See [`config.example.yaml`](config.example.yaml) for a complete example.
+
+### Quick Start Configuration
 
 Create a `config.yaml` file:
 
 ```yaml
-server:
-  port: 8080
-
+# OpenFGA connection
 openfga:
-  url: "http://localhost:8080"
-  store_id: "your-store-id"
-  api_token: "" # Optional: leave empty if not using authentication
+  endpoint: "https://api.openfga.example.com"
+  store_id: "01HXXX-YOUR-STORE-ID"
+  token: "your-api-token"  # Optional
 
-database:
-  driver: "postgres"
+# Database connection  
+backend:
+  type: "postgres"
   dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
+  mode: "changelog"  # or "stateful"
 
+# Service behavior
+service:
+  poll_interval: "5s"
+  batch_size: 100
+  max_retries: 3
+  retry_delay: "1s"
+  enable_validation: true
+
+# Logging
 logging:
-  level: "info" # debug, info, warn, error
-  format: "text" # text or json
+  level: "info"
+  format: "json"
+```
+
+### Advanced Configuration
+
+For production deployments, additional options are available:
+
+```yaml
+service:
+  # Fetching behavior
+  max_changes: 0                    # Limit changes per poll (0 = no limit)
+  request_timeout: "30s"            # Timeout for OpenFGA requests
+  max_retry_delay: "5s"             # Maximum delay between retries
+  backoff_factor: 2.0               # Exponential backoff multiplier
+  rate_limit_delay: "50ms"          # Delay between requests
+
+# Observability
+observability:
+  opentelemetry:
+    endpoint: "http://otel-collector:4317"
+    service_name: "openfga-sync"
+    enabled: true
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+# High availability (Kubernetes)
+leadership:
+  enabled: true
+  namespace: "openfga-system"
+  lock_name: "openfga-sync-leader"
+```
+
+### Environment Variable Support
+
+All configuration options can be overridden with environment variables:
+
+```bash
+export OPENFGA_ENDPOINT="https://api.openfga.example.com"
+export OPENFGA_STORE_ID="01HXXX-YOUR-STORE-ID"
+export BACKEND_DSN="postgres://user:password@localhost:5432/openfga_sync"
+export BACKEND_MODE="changelog"
+export LOG_LEVEL="debug"
 ```
 
 ## Usage
 
-### Running the service
+### Installation
 
 ```bash
-# Build the service
-go build -o openfga-sync ./main.go
+# Clone the repository
+git clone https://github.com/aaguiarz/openfga-sync.git
+cd openfga-sync
 
-# Run with default config
+# Install dependencies
+go mod tidy
+
+# Build the service
+go build -o openfga-sync
+```
+
+### Running the Service
+
+```bash
+# Run with default config (config.yaml)
 ./openfga-sync
 
 # Run with custom config file
 ./openfga-sync -config /path/to/config.yaml
+
+# Run with environment variables only
+OPENFGA_ENDPOINT="https://api.openfga.example.com" \
+OPENFGA_STORE_ID="01HXXX-STORE-ID" \
+BACKEND_DSN="postgres://user:pass@localhost/db" \
+./openfga-sync
+```
+
+### Docker Usage
+
+```bash
+# Build Docker image
+docker build -t openfga-sync .
+
+# Run with config file
+docker run -v $(pwd)/config.yaml:/app/config.yaml openfga-sync
+
+# Run with environment variables
+docker run -e OPENFGA_ENDPOINT="https://api.openfga.example.com" \
+           -e BACKEND_DSN="postgres://user:pass@db:5432/openfga_sync" \
+           openfga-sync
+```
+
+### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfga-sync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openfga-sync
+  template:
+    metadata:
+      labels:
+        app: openfga-sync
+    spec:
+      containers:
+      - name: openfga-sync
+        image: openfga-sync:latest
+        env:
+        - name: OPENFGA_ENDPOINT
+          value: "https://api.openfga.example.com"
+        - name: OPENFGA_STORE_ID
+          value: "01HXXX-STORE-ID"
+        - name: BACKEND_DSN
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: dsn
+        - name: LEADERSHIP_ENABLED
+          value: "true"
 ```
 
 ### Database Setup
 
-The service automatically creates the necessary database tables:
+The service automatically creates and manages database schemas based on the storage mode:
 
-- `openfga_changes`: Stores the change events
-- `sync_state`: Stores the continuation token for resuming
+#### Changelog Mode Tables
+- **`fga_changelog`**: Complete audit trail of authorization changes
+  - `id`: Primary key (auto-increment)
+  - `object_type`, `object_id`: Parsed object information
+  - `relation`: The relationship type
+  - `user_type`, `user_id`: Parsed user information  
+  - `change_type`: Type of change (tuple_write, tuple_delete)
+  - `timestamp`: When the change occurred
+  - `raw_json`: Original OpenFGA response for compliance
+  - `created_at`: When the record was stored
 
-### Dependencies
+#### Stateful Mode Tables
+- **`fga_tuples`**: Current state representation
+  - `object_type`, `object_id`: Object identification
+  - `relation`: Relationship type
+  - `user_type`, `user_id`: User identification
+  - `created_at`, `updated_at`: Timestamps
+  - Primary key: Composite of object, relation, and user
 
-- Go 1.23+
-- PostgreSQL database
-- OpenFGA server
+#### Common Tables
+- **`sync_state`**: Synchronization metadata
+  - `id`: Primary key
+  - `continuation_token`: Last processed token
+  - `last_sync_time`: Timestamp of last successful sync
 
-## Development
+### Development
 
-### Installing dependencies
+#### Prerequisites
+- Go 1.21+ 
+- PostgreSQL 12+ (MySQL and SQLite support planned)
+- OpenFGA server instance
+
+#### Local Development
 
 ```bash
+# Install dependencies
 go mod tidy
+
+# Run tests
+go test ./...
+
+# Run with verbose testing
+go test -v ./...
+
+# Run specific test suites
+go test ./config ./fetcher ./storage
+
+# Run demo examples
+go run examples/changes_demo.go
+go run examples/enhanced_demo/main.go
 ```
 
-### Running locally
+#### Testing
 
-1. Start PostgreSQL database
-2. Start OpenFGA server
-3. Update `config.yaml` with your settings
-4. Run the service: `go run main.go`
+The project includes comprehensive test suites:
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run benchmarks
+go test -bench=. ./fetcher
+
+# Test configuration parsing
+go test ./config -v
+
+# Test fetcher functionality
+go test ./fetcher -v
+```
 
 ## Database Schema
 
@@ -104,210 +325,138 @@ go mod tidy
 - `continuation_token`: Last processed continuation token
 - `updated_at`: When the token was last updated
 
+## Performance & Best Practices
+
+### Recommended Settings
+
+#### For High-Volume Environments
+```yaml
+service:
+  batch_size: 500
+  poll_interval: "1s"
+  max_retries: 5
+  rate_limit_delay: "10ms"
+  request_timeout: "60s"
+  max_retry_delay: "10s"
+```
+
+#### For Low-Latency Requirements
+```yaml
+service:
+  batch_size: 50
+  poll_interval: "100ms"
+  max_retries: 2
+  rate_limit_delay: "5ms"
+  request_timeout: "5s"
+```
+
+### Storage Mode Selection
+
+- **Use Changelog Mode** for:
+  - Compliance and audit requirements
+  - Change analysis and debugging
+  - Complete historical tracking
+  - Forensic analysis
+
+- **Use Stateful Mode** for:
+  - Performance-critical authorization queries
+  - Data replication to other systems
+  - Current state analysis
+  - Reduced storage requirements
+
+### Database Optimization
+
+#### PostgreSQL Settings
+```sql
+-- Optimize for changelog mode
+CREATE INDEX idx_changelog_timestamp ON fga_changelog(timestamp DESC);
+CREATE INDEX idx_changelog_user ON fga_changelog(user_type, user_id);
+CREATE INDEX idx_changelog_object ON fga_changelog(object_type, object_id);
+
+-- Optimize for stateful mode
+CREATE INDEX idx_tuples_user ON fga_tuples(user_type, user_id);
+CREATE INDEX idx_tuples_object ON fga_tuples(object_type, object_id);
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Connection Problems
+```bash
+# Test OpenFGA connectivity
+curl https://api.openfga.example.com/stores/01HXXX-STORE-ID/changes
+
+# Test database connectivity
+psql "postgres://user:pass@localhost:5432/openfga_sync" -c "SELECT 1;"
+```
+
+#### High Memory Usage
+- Reduce `batch_size` in configuration
+- Enable `rate_limit_delay` to slow down processing
+- Monitor with `go tool pprof`
+
+#### Missing Changes
+- Check continuation token in `sync_state` table
+- Verify OpenFGA store ID is correct
+- Review logs for parsing errors
+
+### Debug Mode
+
+Enable debug logging for detailed information:
+
+```yaml
+logging:
+  level: "debug"
+  format: "json"
+```
+
+## Roadmap
+
+### Planned Features
+
+- **Additional Storage Backends**
+  - MySQL support
+  - SQLite support  
+  - MongoDB support
+  - OpenFGA write-back mode
+
+- **High Availability**
+  - Kubernetes leader election
+  - Multi-region support
+  - Auto-failover
+
+- **Enhanced Observability**
+  - OpenTelemetry tracing
+  - Custom dashboards
+  - Alerting rules
+
+- **Performance**
+  - Concurrent processing
+  - Change deduplication
+  - Compression support
+
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes with tests
+4. Run the test suite: `go test ./...`
 5. Submit a pull request
 
-## 
+### Code Standards
 
-Absolutely! Here’s an updated RFC where the `user` field is **split into `user_type` and `user_id`** in both the changelog and state tables, and throughout the relevant parts of the specification.
+- Follow Go conventions and best practices
+- Add tests for new functionality
+- Update documentation for user-facing changes
+- Use structured logging with appropriate levels
 
----
+## License
 
-# RFC: OpenFGA Change Streamer Service
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Summary
+## Support
 
-This document specifies a Kubernetes-native, high-availability Go service that continuously consumes changes from an OpenFGA instance via the `/changes` API and writes those changes to a configurable backend store. The service supports two storage modes—changelog (append-only) and stateful (applies mutations)—and is designed for observability, operational ease, and pluggability.
-
----
-
-## Goals
-
-* Continuously and reliably consume the OpenFGA `/changes` API.
-* Write changes to a supported backend store (MySQL, Postgres, SQLite, or another OpenFGA instance).
-* Support **two storage modes**:
-
-  * **Changelog**: Store raw change events in an append-only log.
-  * **Stateful**: Apply changes to a table so the backend reflects the current state.
-* Represent users as `{user_type, user_id}` pairs in all storage.
-* Run reliably and scalably in Kubernetes, supporting high availability.
-* Provide observability via OpenTelemetry metrics, logs, and traces.
-* Expose health and readiness endpoints for operational use.
-
----
-
-## Non-Goals
-
-* Real-time data transformation beyond simple mutation (e.g., no enrichment).
-* Change deduplication across multiple OpenFGA instances.
-* External orchestration or pipeline management.
-
----
-
-## Service Specification
-
-### 1. **Configuration**
-
-The service must be configurable via environment variables or a configuration file, supporting:
-
-* OpenFGA API endpoint and authentication.
-* Backend store type and connection parameters.
-* Storage mode (`changelog` or `stateful`).
-* Polling interval and batch size.
-* OpenTelemetry endpoint and configuration.
-* Service port for health/metrics endpoints.
-
-### 2. **Fetching Changes**
-
-* Continuously call the OpenFGA `/changes` API with a continuation token, starting from a configured initial token (or from the beginning if not set).
-* Handle paging with continuation tokens, fetching changes until no new data is available, then sleep for the polling interval.
-
-### 3. **Storage Modes**
-
-#### 3.1. **Changelog Mode**
-
-* Each change event is written to a dedicated append-only table.
-* Table schema must include: change type (`add`/`delete`), object type, object ID, relation, **user type**, **user ID**, timestamp, and raw event (as JSON).
-
-#### 3.2. **Stateful Mode**
-
-* The service applies each change event:
-
-  * For `add`, insert or upsert the tuple into a state table.
-  * For `delete`, delete the tuple from the state table.
-* The state table represents the current set of tuples as per OpenFGA, with users split into `user_type` and `user_id`.
-
-### 4. **Backend Store Abstraction**
-
-* The service must define a **Store Adapter** interface with methods to handle both changelog and stateful modes.
-* Implementations must exist for MySQL, Postgres, SQLite, and OpenFGA (writing changes as API calls if configured).
-* Backends must be selected at runtime based on configuration.
-
-### 5. **High Availability and Scalability**
-
-* Service must be stateless and horizontally scalable.
-* **Leader election**: By default, only one pod actively consumes and processes changes at a time. If the leader fails, another pod takes over automatically.
-* **Future extensibility**: The design should allow sharding if OpenFGA supports partitioned changelogs.
-
-### 6. **Observability**
-
-* **Metrics**: Expose operational metrics (e.g., number of changes processed, errors, lag, etc.) via a Prometheus-compatible `/metrics` endpoint.
-* **Tracing**: Integrate with OpenTelemetry for distributed tracing.
-* **Logging**: Structured, JSON logs with request and operation context.
-* **Health endpoints**: Provide `/healthz` and `/readyz` endpoints.
-
-### 7. **Operational Concerns**
-
-* The service must support graceful shutdown and draining.
-* Must provide meaningful error handling, retries with exponential backoff, and alert on repeated failures.
-* Configuration reload on SIGHUP is optional.
-
----
-
-## Table Schemas
-
-### Changelog Table Example
-
-```sql
-CREATE TABLE fga_changelog (
-    id BIGSERIAL PRIMARY KEY,
-    change_type VARCHAR,
-    object_type VARCHAR,
-    object_id VARCHAR,
-    relation VARCHAR,
-    user_type VARCHAR,
-    user_id VARCHAR,
-    timestamp TIMESTAMPTZ,
-    raw_event JSONB
-);
-```
-
-### State Table Example
-
-```sql
-CREATE TABLE fga_tuples (
-    object_type VARCHAR,
-    object_id VARCHAR,
-    relation VARCHAR,
-    user_type VARCHAR,
-    user_id VARCHAR,
-    PRIMARY KEY (object_type, object_id, relation, user_type, user_id)
-);
-```
-
----
-
-## API Endpoints
-
-* `/metrics` (Prometheus)
-* `/healthz` (liveness)
-* `/readyz` (readiness)
-
----
-
-## Out of Scope
-
-* API for manual tuple editing or replay.
-* UI/dashboard.
-
----
-
-## Example Configuration
-
-```yaml
-openfga:
-  endpoint: https://openfga.example.com
-  token: <secret>
-backend:
-  type: postgres
-  dsn: postgres://user:pass@host/db
-  mode: changelog
-poll_interval: 5s
-batch_size: 100
-otel_endpoint: http://otel-collector:4317
-```
-
----
-
-## Example Pseudocode (Go)
-
-```go
-for {
-    changes, token, err := fetchChanges(lastToken)
-    for _, c := range changes {
-        // c.UserType and c.UserID used instead of c.User
-        if config.Mode == "changelog" {
-            store.WriteChange(ctx, c)
-        } else {
-            store.ApplyChange(ctx, c)
-        }
-    }
-    lastToken = token
-    sleep(config.PollInterval)
-}
-```
-
----
-
-## References
-
-* [OpenFGA API Reference](https://openfga.dev/docs/api)
-* [OpenTelemetry Go](https://opentelemetry.io/docs/instrumentation/go/)
-* [Kubernetes Leader Election](https://kubernetes.io/docs/tasks/administer-cluster/configure-leader-election-cluster/)
-* [Prometheus Metrics](https://prometheus.io/docs/introduction/overview/)
-
----
-
-## Future Work
-
-* Support for change stream partitioning and sharding when available.
-* Support for additional backends (e.g., Kafka, S3).
-
----
-
-**End of RFC**
+- **Documentation**: See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options
+- **Examples**: Check the `examples/` directory for usage examples
+- **Issues**: Report bugs and feature requests on GitHub Issues

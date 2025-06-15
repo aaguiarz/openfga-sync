@@ -41,12 +41,12 @@ func main() {
 	}
 
 	logger.WithFields(logrus.Fields{
-		"version":         "1.0.0",
+		"version":          "1.0.0",
 		"openfga_endpoint": cfg.OpenFGA.Endpoint,
-		"openfga_store":   cfg.OpenFGA.StoreID,
-		"backend_type":    cfg.Backend.Type,
-		"storage_mode":    cfg.Backend.Mode,
-		"poll_interval":   cfg.Service.PollInterval,
+		"openfga_store":    cfg.OpenFGA.StoreID,
+		"backend_type":     cfg.Backend.Type,
+		"storage_mode":     cfg.Backend.Mode,
+		"poll_interval":    cfg.Service.PollInterval,
 	}).Info("Starting OpenFGA sync service")
 
 	// Initialize storage adapter
@@ -56,16 +56,32 @@ func main() {
 	}
 	defer storageAdapter.Close()
 
-	// Initialize OpenFGA fetcher
-	fgaFetcher, err := fetcher.NewOpenFGAFetcher(
+	// Initialize OpenFGA fetcher with enhanced options
+	fetchOptions := fetcher.FetchOptions{
+		PageSize:   cfg.Service.BatchSize,
+		MaxChanges: cfg.Service.MaxChanges,
+		Timeout:    cfg.Service.RequestTimeout,
+		RetryConfig: fetcher.RetryConfig{
+			MaxRetries:    cfg.Service.MaxRetries,
+			InitialDelay:  cfg.Service.RetryDelay,
+			MaxDelay:      cfg.Service.MaxRetryDelay,
+			BackoffFactor: cfg.Service.BackoffFactor,
+		},
+		RateLimitDelay:   cfg.Service.RateLimitDelay,
+		EnableValidation: cfg.Service.EnableValidation,
+	}
+
+	fgaFetcher, err := fetcher.NewOpenFGAFetcherWithOptions(
 		cfg.OpenFGA.Endpoint,
 		cfg.OpenFGA.StoreID,
 		cfg.OpenFGA.Token,
 		logger,
+		fetchOptions,
 	)
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to initialize OpenFGA fetcher")
 	}
+	defer fgaFetcher.Close()
 
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,40 +134,52 @@ func runSyncLoop(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 
 // syncChanges fetches and stores changes from OpenFGA
 func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storageAdapter storage.StorageAdapter, cfg *config.Config, continuationToken *string, logger *logrus.Logger) error {
-	changes, nextToken, err := fgaFetcher.FetchChanges(ctx, *continuationToken)
+	// Use enhanced fetch with retry logic
+	result, err := fgaFetcher.FetchChangesWithRetry(ctx, *continuationToken, cfg.Service.BatchSize)
 	if err != nil {
 		return fmt.Errorf("failed to fetch changes: %w", err)
 	}
 
-	if len(changes) == 0 {
+	if len(result.Changes) == 0 {
 		logger.Debug("No new changes found")
 		return nil
 	}
 
+	// Log fetcher statistics
+	stats := fgaFetcher.GetStats()
+	logger.WithFields(logrus.Fields{
+		"total_requests":   stats.TotalRequests,
+		"success_requests": stats.SuccessRequests,
+		"failed_requests":  stats.FailedRequests,
+		"average_latency":  fmt.Sprintf("%.2fms", stats.AverageLatency),
+	}).Debug("Fetcher statistics")
+
 	// Apply changes based on storage mode
 	if cfg.IsChangelogMode() {
-		if err := storageAdapter.WriteChanges(ctx, changes); err != nil {
+		if err := storageAdapter.WriteChanges(ctx, result.Changes); err != nil {
 			return fmt.Errorf("failed to write changes: %w", err)
 		}
 	} else if cfg.IsStatefulMode() {
-		if err := storageAdapter.ApplyChanges(ctx, changes); err != nil {
+		if err := storageAdapter.ApplyChanges(ctx, result.Changes); err != nil {
 			return fmt.Errorf("failed to apply changes: %w", err)
 		}
 	} else {
 		return fmt.Errorf("unsupported storage mode: %s", cfg.Backend.Mode)
 	}
 
-	if nextToken != "" {
-		if err := storageAdapter.SaveContinuationToken(ctx, nextToken); err != nil {
+	if result.ContinuationToken != "" {
+		if err := storageAdapter.SaveContinuationToken(ctx, result.ContinuationToken); err != nil {
 			return fmt.Errorf("failed to save continuation token: %w", err)
 		}
-		*continuationToken = nextToken
+		*continuationToken = result.ContinuationToken
 	}
 
 	logger.WithFields(logrus.Fields{
-		"changes_processed": len(changes),
-		"next_token":        nextToken,
+		"changes_processed": len(result.Changes),
+		"next_token":        result.ContinuationToken,
 		"storage_mode":      cfg.Backend.Mode,
+		"has_more":          result.HasMore,
+		"total_fetched":     result.TotalFetched,
 	}).Info("Successfully processed changes batch")
 
 	return nil

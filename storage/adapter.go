@@ -13,16 +13,16 @@ import (
 type StorageAdapter interface {
 	// WriteChanges writes a batch of change events to storage in changelog mode
 	WriteChanges(ctx context.Context, changes []fetcher.ChangeEvent) error
-	
+
 	// ApplyChanges applies a batch of changes to state table (stateful mode)
 	ApplyChanges(ctx context.Context, changes []fetcher.ChangeEvent) error
-	
+
 	// GetLastContinuationToken retrieves the last processed continuation token
 	GetLastContinuationToken(ctx context.Context) (string, error)
-	
+
 	// SaveContinuationToken saves the continuation token for resuming processing
 	SaveContinuationToken(ctx context.Context, token string) error
-	
+
 	// Close closes the storage connection
 	Close() error
 }
