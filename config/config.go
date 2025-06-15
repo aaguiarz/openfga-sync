@@ -1,0 +1,341 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// StorageMode represents the storage mode for the service
+type StorageMode string
+
+const (
+	StorageModeChangelog StorageMode = "changelog"
+	StorageModeStateful  StorageMode = "stateful"
+)
+
+// Config represents the application configuration
+type Config struct {
+	Server      ServerConfig      `yaml:"server"`
+	OpenFGA     OpenFGAConfig     `yaml:"openfga"`
+	Backend     BackendConfig     `yaml:"backend"`
+	Logging     LoggingConfig     `yaml:"logging"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Service     ServiceConfig     `yaml:"service"`
+	Leadership  LeadershipConfig  `yaml:"leadership"`
+}
+
+// ServerConfig contains server-specific configuration
+type ServerConfig struct {
+	Port int `yaml:"port" env:"SERVER_PORT"`
+}
+
+// OpenFGAConfig contains OpenFGA-specific configuration
+type OpenFGAConfig struct {
+	Endpoint string `yaml:"endpoint" env:"OPENFGA_ENDPOINT"`
+	Token    string `yaml:"token" env:"OPENFGA_TOKEN"`
+	StoreID  string `yaml:"store_id" env:"OPENFGA_STORE_ID"`
+}
+
+// BackendConfig contains backend storage configuration
+type BackendConfig struct {
+	Type string      `yaml:"type" env:"BACKEND_TYPE"`
+	DSN  string      `yaml:"dsn" env:"BACKEND_DSN"`
+	Mode StorageMode `yaml:"mode" env:"BACKEND_MODE"`
+}
+
+// LoggingConfig contains logging-specific configuration
+type LoggingConfig struct {
+	Level  string `yaml:"level" env:"LOG_LEVEL"`
+	Format string `yaml:"format" env:"LOG_FORMAT"`
+}
+
+// ObservabilityConfig contains observability configuration
+type ObservabilityConfig struct {
+	OpenTelemetry OpenTelemetryConfig `yaml:"opentelemetry"`
+	Metrics       MetricsConfig       `yaml:"metrics"`
+}
+
+// OpenTelemetryConfig contains OpenTelemetry configuration
+type OpenTelemetryConfig struct {
+	Endpoint    string `yaml:"endpoint" env:"OTEL_ENDPOINT"`
+	ServiceName string `yaml:"service_name" env:"OTEL_SERVICE_NAME"`
+	Enabled     bool   `yaml:"enabled" env:"OTEL_ENABLED"`
+}
+
+// MetricsConfig contains metrics configuration
+type MetricsConfig struct {
+	Enabled bool   `yaml:"enabled" env:"METRICS_ENABLED"`
+	Path    string `yaml:"path" env:"METRICS_PATH"`
+}
+
+// ServiceConfig contains service-specific configuration
+type ServiceConfig struct {
+	PollInterval time.Duration `yaml:"poll_interval" env:"POLL_INTERVAL"`
+	BatchSize    int32         `yaml:"batch_size" env:"BATCH_SIZE"`
+	MaxRetries   int           `yaml:"max_retries" env:"MAX_RETRIES"`
+	RetryDelay   time.Duration `yaml:"retry_delay" env:"RETRY_DELAY"`
+}
+
+// LeadershipConfig contains leader election configuration
+type LeadershipConfig struct {
+	Enabled   bool   `yaml:"enabled" env:"LEADERSHIP_ENABLED"`
+	Namespace string `yaml:"namespace" env:"LEADERSHIP_NAMESPACE"`
+	LockName  string `yaml:"lock_name" env:"LEADERSHIP_LOCK_NAME"`
+}
+
+// DefaultConfig returns a configuration with sensible defaults
+func DefaultConfig() *Config {
+	return &Config{
+		Server: ServerConfig{
+			Port: 8080,
+		},
+		OpenFGA: OpenFGAConfig{
+			Endpoint: "http://localhost:8080",
+		},
+		Backend: BackendConfig{
+			Type: "postgres",
+			Mode: StorageModeChangelog,
+		},
+		Logging: LoggingConfig{
+			Level:  "info",
+			Format: "text",
+		},
+		Observability: ObservabilityConfig{
+			OpenTelemetry: OpenTelemetryConfig{
+				ServiceName: "openfga-sync",
+				Enabled:     false,
+			},
+			Metrics: MetricsConfig{
+				Enabled: true,
+				Path:    "/metrics",
+			},
+		},
+		Service: ServiceConfig{
+			PollInterval: 5 * time.Second,
+			BatchSize:    100,
+			MaxRetries:   3,
+			RetryDelay:   1 * time.Second,
+		},
+		Leadership: LeadershipConfig{
+			Enabled:   false,
+			Namespace: "default",
+			LockName:  "openfga-sync-leader",
+		},
+	}
+}
+
+// LoadConfig loads configuration from YAML file and environment variables
+func LoadConfig(path string) (*Config, error) {
+	config := DefaultConfig()
+
+	// Load from YAML file if provided
+	if path != "" {
+		if err := loadFromYAML(config, path); err != nil {
+			return nil, fmt.Errorf("failed to load YAML config: %w", err)
+		}
+	}
+
+	// Override with environment variables
+	if err := loadFromEnv(config); err != nil {
+		return nil, fmt.Errorf("failed to load environment config: %w", err)
+	}
+
+	// Validate configuration
+	if err := config.validate(); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return config, nil
+}
+
+// loadFromYAML loads configuration from a YAML file
+func loadFromYAML(config *Config, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist, continue with defaults
+			return nil
+		}
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if err := yaml.Unmarshal(data, config); err != nil {
+		return fmt.Errorf("failed to parse YAML config: %w", err)
+	}
+
+	return nil
+}
+
+// loadFromEnv loads configuration from environment variables
+func loadFromEnv(config *Config) error {
+	// Server configuration
+	if port := os.Getenv("SERVER_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			config.Server.Port = p
+		}
+	}
+
+	// OpenFGA configuration
+	if endpoint := os.Getenv("OPENFGA_ENDPOINT"); endpoint != "" {
+		config.OpenFGA.Endpoint = endpoint
+	}
+	if token := os.Getenv("OPENFGA_TOKEN"); token != "" {
+		config.OpenFGA.Token = token
+	}
+	if storeID := os.Getenv("OPENFGA_STORE_ID"); storeID != "" {
+		config.OpenFGA.StoreID = storeID
+	}
+
+	// Backend configuration
+	if backendType := os.Getenv("BACKEND_TYPE"); backendType != "" {
+		config.Backend.Type = backendType
+	}
+	if dsn := os.Getenv("BACKEND_DSN"); dsn != "" {
+		config.Backend.DSN = dsn
+	}
+	if mode := os.Getenv("BACKEND_MODE"); mode != "" {
+		config.Backend.Mode = StorageMode(mode)
+	}
+
+	// Logging configuration
+	if level := os.Getenv("LOG_LEVEL"); level != "" {
+		config.Logging.Level = level
+	}
+	if format := os.Getenv("LOG_FORMAT"); format != "" {
+		config.Logging.Format = format
+	}
+
+	// OpenTelemetry configuration
+	if endpoint := os.Getenv("OTEL_ENDPOINT"); endpoint != "" {
+		config.Observability.OpenTelemetry.Endpoint = endpoint
+	}
+	if serviceName := os.Getenv("OTEL_SERVICE_NAME"); serviceName != "" {
+		config.Observability.OpenTelemetry.ServiceName = serviceName
+	}
+	if enabled := os.Getenv("OTEL_ENABLED"); enabled != "" {
+		if e, err := strconv.ParseBool(enabled); err == nil {
+			config.Observability.OpenTelemetry.Enabled = e
+		}
+	}
+
+	// Metrics configuration
+	if enabled := os.Getenv("METRICS_ENABLED"); enabled != "" {
+		if e, err := strconv.ParseBool(enabled); err == nil {
+			config.Observability.Metrics.Enabled = e
+		}
+	}
+	if path := os.Getenv("METRICS_PATH"); path != "" {
+		config.Observability.Metrics.Path = path
+	}
+
+	// Service configuration
+	if pollInterval := os.Getenv("POLL_INTERVAL"); pollInterval != "" {
+		if p, err := time.ParseDuration(pollInterval); err == nil {
+			config.Service.PollInterval = p
+		}
+	}
+	if batchSize := os.Getenv("BATCH_SIZE"); batchSize != "" {
+		if b, err := strconv.ParseInt(batchSize, 10, 32); err == nil {
+			config.Service.BatchSize = int32(b)
+		}
+	}
+	if maxRetries := os.Getenv("MAX_RETRIES"); maxRetries != "" {
+		if m, err := strconv.Atoi(maxRetries); err == nil {
+			config.Service.MaxRetries = m
+		}
+	}
+	if retryDelay := os.Getenv("RETRY_DELAY"); retryDelay != "" {
+		if r, err := time.ParseDuration(retryDelay); err == nil {
+			config.Service.RetryDelay = r
+		}
+	}
+
+	// Leadership configuration
+	if enabled := os.Getenv("LEADERSHIP_ENABLED"); enabled != "" {
+		if e, err := strconv.ParseBool(enabled); err == nil {
+			config.Leadership.Enabled = e
+		}
+	}
+	if namespace := os.Getenv("LEADERSHIP_NAMESPACE"); namespace != "" {
+		config.Leadership.Namespace = namespace
+	}
+	if lockName := os.Getenv("LEADERSHIP_LOCK_NAME"); lockName != "" {
+		config.Leadership.LockName = lockName
+	}
+
+	return nil
+}
+
+// validate validates the configuration
+func (c *Config) validate() error {
+	var errors []string
+
+	// Validate OpenFGA configuration
+	if c.OpenFGA.Endpoint == "" {
+		errors = append(errors, "openfga.endpoint is required")
+	}
+	if c.OpenFGA.StoreID == "" {
+		errors = append(errors, "openfga.store_id is required")
+	}
+
+	// Validate backend configuration
+	if c.Backend.Type == "" {
+		errors = append(errors, "backend.type is required")
+	}
+	if c.Backend.DSN == "" {
+		errors = append(errors, "backend.dsn is required")
+	}
+	if c.Backend.Mode != StorageModeChangelog && c.Backend.Mode != StorageModeStateful {
+		errors = append(errors, "backend.mode must be 'changelog' or 'stateful'")
+	}
+
+	// Validate logging configuration
+	validLogLevels := []string{"debug", "info", "warn", "error", "fatal", "panic"}
+	if !contains(validLogLevels, c.Logging.Level) {
+		errors = append(errors, "logging.level must be one of: debug, info, warn, error, fatal, panic")
+	}
+
+	validLogFormats := []string{"text", "json"}
+	if !contains(validLogFormats, c.Logging.Format) {
+		errors = append(errors, "logging.format must be 'text' or 'json'")
+	}
+
+	// Validate service configuration
+	if c.Service.PollInterval <= 0 {
+		errors = append(errors, "service.poll_interval must be positive")
+	}
+	if c.Service.BatchSize <= 0 {
+		errors = append(errors, "service.batch_size must be positive")
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("validation errors: %s", strings.Join(errors, ", "))
+	}
+
+	return nil
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// IsChangelogMode returns true if the storage mode is changelog
+func (c *Config) IsChangelogMode() bool {
+	return c.Backend.Mode == StorageModeChangelog
+}
+
+// IsStatefulMode returns true if the storage mode is stateful
+func (c *Config) IsStatefulMode() bool {
+	return c.Backend.Mode == StorageModeStateful
+}

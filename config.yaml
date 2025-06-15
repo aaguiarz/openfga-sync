@@ -1,0 +1,38 @@
+# OpenFGA Sync Service Configuration
+
+server:
+  port: 8080
+
+openfga:
+  endpoint: "http://localhost:8080"
+  store_id: "your-store-id"
+  token: "" # Optional: leave empty if not using authentication
+
+backend:
+  type: "postgres" # postgres, mysql, sqlite, openfga
+  dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
+  mode: "changelog" # changelog or stateful
+
+logging:
+  level: "info" # debug, info, warn, error, fatal, panic
+  format: "text" # text or json
+
+observability:
+  opentelemetry:
+    endpoint: "http://otel-collector:4317"
+    service_name: "openfga-sync"
+    enabled: false
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+service:
+  poll_interval: "5s"
+  batch_size: 100
+  max_retries: 3
+  retry_delay: "1s"
+
+leadership:
+  enabled: false # Enable for Kubernetes leader election
+  namespace: "default"
+  lock_name: "openfga-sync-leader"

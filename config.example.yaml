@@ -1,0 +1,70 @@
+# OpenFGA Sync Service - Example Configuration
+# This file demonstrates all available configuration options
+
+# Server configuration for health/metrics endpoints
+server:
+  port: 8080
+
+# OpenFGA instance configuration
+openfga:
+  endpoint: "https://api.openfga.example.com"  # OpenFGA API endpoint
+  store_id: "01HXXX-EXAMPLE-STORE-ID"          # Your OpenFGA store ID
+  token: "fga_secret_token_here"               # Optional: API token for authentication
+
+# Backend storage configuration
+backend:
+  type: "postgres"                             # Storage type: postgres, mysql, sqlite, openfga
+  dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
+  mode: "changelog"                            # Storage mode: changelog or stateful
+
+# Logging configuration
+logging:
+  level: "info"                                # Log level: debug, info, warn, error, fatal, panic
+  format: "json"                               # Log format: text or json
+
+# Observability and monitoring
+observability:
+  opentelemetry:
+    endpoint: "http://otel-collector:4317"     # OpenTelemetry collector endpoint
+    service_name: "openfga-sync"               # Service name for tracing
+    enabled: true                              # Enable OpenTelemetry tracing
+  metrics:
+    enabled: true                              # Enable Prometheus metrics
+    path: "/metrics"                           # Metrics endpoint path
+
+# Service behavior configuration  
+service:
+  poll_interval: "5s"                          # How often to poll for changes
+  batch_size: 100                              # Maximum changes to process per batch
+  max_retries: 3                               # Maximum retry attempts on failure
+  retry_delay: "1s"                            # Delay between retry attempts
+
+# Kubernetes leader election (for HA deployments)
+leadership:
+  enabled: true                                # Enable leader election
+  namespace: "openfga-system"                  # Kubernetes namespace for the lock
+  lock_name: "openfga-sync-leader"             # Name of the leader lock
+
+---
+# Environment Variable Examples:
+# 
+# OPENFGA_ENDPOINT=https://api.openfga.example.com
+# OPENFGA_STORE_ID=01HXXX-EXAMPLE-STORE-ID
+# OPENFGA_TOKEN=fga_secret_token_here
+# BACKEND_TYPE=postgres
+# BACKEND_DSN=postgres://user:password@localhost:5432/openfga_sync?sslmode=disable
+# BACKEND_MODE=changelog
+# LOG_LEVEL=info
+# LOG_FORMAT=json
+# OTEL_ENDPOINT=http://otel-collector:4317
+# OTEL_SERVICE_NAME=openfga-sync
+# OTEL_ENABLED=true
+# METRICS_ENABLED=true
+# METRICS_PATH=/metrics
+# POLL_INTERVAL=5s
+# BATCH_SIZE=100
+# MAX_RETRIES=3
+# RETRY_DELAY=1s
+# LEADERSHIP_ENABLED=true
+# LEADERSHIP_NAMESPACE=openfga-system
+# LEADERSHIP_LOCK_NAME=openfga-sync-leader
