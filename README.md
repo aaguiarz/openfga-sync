@@ -359,6 +359,46 @@ export OTEL_ENABLED="true"
 export METRICS_ENABLED="true"
 ```
 
+### 🔐 OIDC Authentication
+
+The service supports OIDC authentication using the OAuth 2.0 client credentials flow, particularly useful for Auth0 FGA and other OIDC-enabled OpenFGA instances:
+
+#### YAML Configuration
+```yaml
+openfga:
+  endpoint: "https://api.us1.fga.dev"
+  store_id: "01HAUTH0-FGA-STORE-ID"
+  
+  # OIDC configuration (alternative to token)
+  oidc:
+    issuer: "https://your-company.auth0.com/"
+    audience: "https://api.us1.fga.dev/"
+    client_id: "your-m2m-client-id"
+    client_secret: "your-m2m-client-secret"
+    scopes: ["read:tuples", "write:tuples"]
+    token_issuer: "https://your-company.auth0.com/"
+```
+
+#### Environment Variables
+```bash
+export OPENFGA_ENDPOINT="https://api.us1.fga.dev"
+export OPENFGA_STORE_ID="01HAUTH0-FGA-STORE-ID"
+export OPENFGA_OIDC_ISSUER="https://your-company.auth0.com/"
+export OPENFGA_OIDC_AUDIENCE="https://api.us1.fga.dev/"
+export OPENFGA_OIDC_CLIENT_ID="your-m2m-client-id"
+export OPENFGA_OIDC_CLIENT_SECRET="your-m2m-client-secret"
+export OPENFGA_OIDC_SCOPES="read:tuples,write:tuples"
+```
+
+#### Authentication Priority
+- **OIDC**: Used if both `client_id` and `client_secret` are provided
+- **API Token**: Used if `token` is provided and no OIDC configuration
+- **Error**: Configuration validation fails if both are provided
+
+> 📖 **Detailed Setup Guide**: See [OIDC_AUTHENTICATION.md](OIDC_AUTHENTICATION.md) for complete Auth0 FGA setup instructions.
+
+```bash
+
 ### Configuration Validation
 
 The service validates configuration on startup:

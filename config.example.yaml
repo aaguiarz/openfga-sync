@@ -10,6 +10,16 @@ openfga:
   endpoint: "https://api.openfga.example.com"  # OpenFGA API endpoint
   store_id: "01HXXX-EXAMPLE-STORE-ID"          # Your OpenFGA store ID
   token: "fga_secret_token_here"               # Optional: API token for authentication
+  
+  # OIDC authentication configuration (alternative to token)
+  # Use this for Auth0 FGA or other OIDC-enabled OpenFGA instances
+  oidc:
+    issuer: "https://your-auth0-domain.auth0.com/"          # OIDC issuer URL
+    audience: "https://api.us1.fga.dev/"                    # API audience 
+    client_id: "your-client-id"                             # Client credentials ID
+    client_secret: "your-client-secret"                     # Client credentials secret
+    scopes: ["read:tuples", "write:tuples"]                 # Optional: specific scopes
+    token_issuer: "https://your-auth0-domain.auth0.com/"    # Token issuer (usually same as issuer)
 
 # Backend storage configuration
 backend:

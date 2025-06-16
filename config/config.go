@@ -36,9 +36,20 @@ type ServerConfig struct {
 
 // OpenFGAConfig contains OpenFGA-specific configuration
 type OpenFGAConfig struct {
-	Endpoint string `yaml:"endpoint" env:"OPENFGA_ENDPOINT"`
-	Token    string `yaml:"token" env:"OPENFGA_TOKEN"`
-	StoreID  string `yaml:"store_id" env:"OPENFGA_STORE_ID"`
+	Endpoint string     `yaml:"endpoint" env:"OPENFGA_ENDPOINT"`
+	Token    string     `yaml:"token" env:"OPENFGA_TOKEN"`
+	StoreID  string     `yaml:"store_id" env:"OPENFGA_STORE_ID"`
+	OIDC     OIDCConfig `yaml:"oidc"`
+}
+
+// OIDCConfig contains OIDC authentication configuration for OpenFGA
+type OIDCConfig struct {
+	Issuer       string   `yaml:"issuer" env:"OPENFGA_OIDC_ISSUER"`
+	Audience     string   `yaml:"audience" env:"OPENFGA_OIDC_AUDIENCE"`
+	ClientID     string   `yaml:"client_id" env:"OPENFGA_OIDC_CLIENT_ID"`
+	ClientSecret string   `yaml:"client_secret" env:"OPENFGA_OIDC_CLIENT_SECRET"`
+	Scopes       []string `yaml:"scopes" env:"OPENFGA_OIDC_SCOPES"`
+	TokenIssuer  string   `yaml:"token_issuer" env:"OPENFGA_OIDC_TOKEN_ISSUER"`
 }
 
 // BackendConfig contains backend storage configuration
@@ -102,6 +113,7 @@ func DefaultConfig() *Config {
 		},
 		OpenFGA: OpenFGAConfig{
 			Endpoint: "http://localhost:8080",
+			Token:    "development-token", // Default token for development
 		},
 		Backend: BackendConfig{
 			Type: "postgres",
@@ -197,11 +209,35 @@ func loadFromEnv(config *Config) error {
 	if endpoint := os.Getenv("OPENFGA_ENDPOINT"); endpoint != "" {
 		config.OpenFGA.Endpoint = endpoint
 	}
-	if token := os.Getenv("OPENFGA_TOKEN"); token != "" {
-		config.OpenFGA.Token = token
+	if token, exists := os.LookupEnv("OPENFGA_TOKEN"); exists {
+		config.OpenFGA.Token = token // Allow empty string to clear default token
 	}
 	if storeID := os.Getenv("OPENFGA_STORE_ID"); storeID != "" {
 		config.OpenFGA.StoreID = storeID
+	}
+
+	// OpenFGA OIDC configuration
+	if issuer := os.Getenv("OPENFGA_OIDC_ISSUER"); issuer != "" {
+		config.OpenFGA.OIDC.Issuer = issuer
+	}
+	if audience := os.Getenv("OPENFGA_OIDC_AUDIENCE"); audience != "" {
+		config.OpenFGA.OIDC.Audience = audience
+	}
+	if clientID := os.Getenv("OPENFGA_OIDC_CLIENT_ID"); clientID != "" {
+		config.OpenFGA.OIDC.ClientID = clientID
+	}
+	if clientSecret := os.Getenv("OPENFGA_OIDC_CLIENT_SECRET"); clientSecret != "" {
+		config.OpenFGA.OIDC.ClientSecret = clientSecret
+	}
+	if scopes := os.Getenv("OPENFGA_OIDC_SCOPES"); scopes != "" {
+		config.OpenFGA.OIDC.Scopes = strings.Split(scopes, ",")
+		// Trim whitespace from each scope
+		for i, scope := range config.OpenFGA.OIDC.Scopes {
+			config.OpenFGA.OIDC.Scopes[i] = strings.TrimSpace(scope)
+		}
+	}
+	if tokenIssuer := os.Getenv("OPENFGA_OIDC_TOKEN_ISSUER"); tokenIssuer != "" {
+		config.OpenFGA.OIDC.TokenIssuer = tokenIssuer
 	}
 
 	// Backend configuration
@@ -324,6 +360,28 @@ func (c *Config) validate() error {
 	}
 	if c.OpenFGA.StoreID == "" {
 		errors = append(errors, "openfga.store_id is required")
+	}
+
+	// Validate OpenFGA authentication: either token or OIDC config must be provided
+	hasToken := c.OpenFGA.Token != ""
+	hasOIDC := c.OpenFGA.OIDC.ClientID != "" && c.OpenFGA.OIDC.ClientSecret != ""
+
+	if !hasToken && !hasOIDC {
+		errors = append(errors, "OpenFGA authentication required: either 'token' or OIDC configuration (client_id and client_secret) must be provided")
+	}
+
+	if hasToken && hasOIDC {
+		errors = append(errors, "OpenFGA authentication conflict: provide either 'token' or OIDC configuration, not both")
+	}
+
+	// Validate OIDC configuration if provided
+	if hasOIDC {
+		if c.OpenFGA.OIDC.Issuer == "" {
+			errors = append(errors, "openfga.oidc.issuer is required when using OIDC authentication")
+		}
+		if c.OpenFGA.OIDC.Audience == "" {
+			errors = append(errors, "openfga.oidc.audience is required when using OIDC authentication")
+		}
 	}
 
 	// Validate backend configuration

@@ -94,13 +94,38 @@ func main() {
 		EnableValidation: cfg.Service.EnableValidation,
 	}
 
-	fgaFetcher, err := fetcher.NewOpenFGAFetcherWithOptions(
-		cfg.OpenFGA.Endpoint,
-		cfg.OpenFGA.StoreID,
-		cfg.OpenFGA.Token,
-		logger,
-		fetchOptions,
-	)
+	var fgaFetcher *fetcher.OpenFGAFetcher
+
+	// Check if OIDC configuration is provided
+	if cfg.OpenFGA.OIDC.ClientID != "" && cfg.OpenFGA.OIDC.ClientSecret != "" {
+		// Use OIDC authentication
+		oidcConfig := fetcher.OIDCConfig{
+			Issuer:       cfg.OpenFGA.OIDC.Issuer,
+			Audience:     cfg.OpenFGA.OIDC.Audience,
+			ClientID:     cfg.OpenFGA.OIDC.ClientID,
+			ClientSecret: cfg.OpenFGA.OIDC.ClientSecret,
+			Scopes:       cfg.OpenFGA.OIDC.Scopes,
+			TokenIssuer:  cfg.OpenFGA.OIDC.TokenIssuer,
+		}
+
+		fgaFetcher, err = fetcher.NewOpenFGAFetcherWithOIDCAndOptions(
+			cfg.OpenFGA.Endpoint,
+			cfg.OpenFGA.StoreID,
+			oidcConfig,
+			logger,
+			fetchOptions,
+		)
+	} else {
+		// Use API token authentication
+		fgaFetcher, err = fetcher.NewOpenFGAFetcherWithOptions(
+			cfg.OpenFGA.Endpoint,
+			cfg.OpenFGA.StoreID,
+			cfg.OpenFGA.Token,
+			logger,
+			fetchOptions,
+		)
+	}
+
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to initialize OpenFGA fetcher")
 	}

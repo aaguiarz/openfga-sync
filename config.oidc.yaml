@@ -1,0 +1,59 @@
+# OpenFGA Sync Service - OIDC Configuration Example
+# This configuration demonstrates OIDC authentication with Auth0 FGA
+
+# Server configuration for health/metrics endpoints
+server:
+  port: 8080
+
+# OpenFGA instance configuration with OIDC authentication
+openfga:
+  endpoint: "https://api.us1.fga.dev"                       # Auth0 FGA endpoint
+  store_id: "01HXXX-YOUR-STORE-ID"                         # Your Auth0 FGA store ID
+  
+  # OIDC authentication configuration for Auth0 FGA
+  oidc:
+    issuer: "https://your-auth0-domain.auth0.com/"          # Your Auth0 domain
+    audience: "https://api.us1.fga.dev/"                    # Auth0 FGA API audience
+    client_id: "your-machine-to-machine-app-client-id"     # M2M application client ID
+    client_secret: "your-machine-to-machine-app-secret"    # M2M application client secret
+    scopes: ["read:tuples", "write:tuples", "read:stores"] # Required scopes for FGA access
+    token_issuer: "https://your-auth0-domain.auth0.com/"   # Token issuer URL
+
+# Backend storage configuration
+backend:
+  type: "postgres"                             # Storage type: postgres, mysql, sqlite, openfga
+  dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
+  mode: "changelog"                            # Storage mode: changelog or stateful
+
+# Service configuration
+service:
+  poll_interval: "10s"                        # How often to poll for changes
+  batch_size: 100                             # Number of changes to process per batch
+  max_retries: 3                              # Maximum retry attempts
+  retry_delay: "1s"                           # Initial retry delay
+  max_retry_delay: "30s"                      # Maximum retry delay
+  backoff_factor: 2.0                         # Exponential backoff factor
+  request_timeout: "30s"                      # Request timeout
+  rate_limit_delay: "50ms"                    # Rate limiting delay between requests
+  enable_validation: true                     # Enable tuple validation
+
+# Logging configuration
+logging:
+  level: "info"                               # Log level: debug, info, warn, error, fatal, panic
+  format: "json"                              # Log format: text or json
+
+# Observability configuration
+observability:
+  opentelemetry:
+    enabled: false                            # Enable OpenTelemetry tracing
+    endpoint: "http://localhost:4318"         # OTEL collector endpoint
+    service_name: "openfga-sync"              # Service name for tracing
+  metrics:
+    enabled: true                             # Enable Prometheus metrics
+    path: "/metrics"                          # Metrics endpoint path
+
+# Leadership election (for high availability)
+leadership:
+  enabled: false                              # Enable leader election
+  namespace: "default"                        # Kubernetes namespace
+  lock_name: "openfga-sync-leader"           # Leader election lock name

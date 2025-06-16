@@ -31,14 +31,25 @@ type OpenFGAAdapter struct {
 
 // OpenFGAConfig represents the configuration for OpenFGA adapter
 type OpenFGAConfig struct {
-	Endpoint             string `json:"endpoint"`
-	StoreID              string `json:"store_id"`
-	Token                string `json:"token"`
-	AuthorizationModelID string `json:"authorization_model_id,omitempty"`
-	RequestTimeout       string `json:"request_timeout,omitempty"` // String format like "30s"
-	MaxRetries           int    `json:"max_retries,omitempty"`
-	RetryDelay           string `json:"retry_delay,omitempty"` // String format like "1s"
-	BatchSize            int    `json:"batch_size,omitempty"`
+	Endpoint             string     `json:"endpoint"`
+	StoreID              string     `json:"store_id"`
+	Token                string     `json:"token"`
+	AuthorizationModelID string     `json:"authorization_model_id,omitempty"`
+	RequestTimeout       string     `json:"request_timeout,omitempty"` // String format like "30s"
+	MaxRetries           int        `json:"max_retries,omitempty"`
+	RetryDelay           string     `json:"retry_delay,omitempty"` // String format like "1s"
+	BatchSize            int        `json:"batch_size,omitempty"`
+	OIDC                 OIDCConfig `json:"oidc,omitempty"`
+}
+
+// OIDCConfig contains OIDC authentication configuration
+type OIDCConfig struct {
+	Issuer       string   `json:"issuer"`
+	Audience     string   `json:"audience"`
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	Scopes       []string `json:"scopes"`
+	TokenIssuer  string   `json:"token_issuer"`
 }
 
 // NewOpenFGAAdapter creates a new OpenFGA storage adapter
@@ -56,8 +67,9 @@ func NewOpenFGAAdapter(dsn string, mode config.StorageMode, logger *logrus.Logge
 		StoreId: cfg.StoreID,
 	}
 
-	// Set up authentication if token is provided
+	// Set up authentication - either token or OIDC
 	if cfg.Token != "" {
+		// Use API token authentication
 		creds, err := credentials.NewCredentials(credentials.Credentials{
 			Method: credentials.CredentialsMethodApiToken,
 			Config: &credentials.Config{
@@ -65,7 +77,29 @@ func NewOpenFGAAdapter(dsn string, mode config.StorageMode, logger *logrus.Logge
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create credentials: %w", err)
+			return nil, fmt.Errorf("failed to create token credentials: %w", err)
+		}
+		configuration.Credentials = creds
+	} else if cfg.OIDC.ClientID != "" && cfg.OIDC.ClientSecret != "" {
+		// Use OIDC client credentials authentication
+		credentialsConfig := &credentials.Config{
+			ClientCredentialsClientId:       cfg.OIDC.ClientID,
+			ClientCredentialsClientSecret:   cfg.OIDC.ClientSecret,
+			ClientCredentialsApiTokenIssuer: cfg.OIDC.TokenIssuer,
+			ClientCredentialsApiAudience:    cfg.OIDC.Audience,
+		}
+
+		// Add scopes if provided
+		if len(cfg.OIDC.Scopes) > 0 {
+			credentialsConfig.ClientCredentialsScopes = strings.Join(cfg.OIDC.Scopes, " ")
+		}
+
+		creds, err := credentials.NewCredentials(credentials.Credentials{
+			Method: credentials.CredentialsMethodClientCredentials,
+			Config: credentialsConfig,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OIDC credentials: %w", err)
 		}
 		configuration.Credentials = creds
 	}
@@ -140,6 +174,7 @@ func NewOpenFGAAdapter(dsn string, mode config.StorageMode, logger *logrus.Logge
 // Supports two formats:
 // 1. Simple: "endpoint/store_id" (e.g., "http://localhost:8080/store123")
 // 2. JSON: {"endpoint":"http://localhost:8080","store_id":"store123","token":"token123"}
+// 3. JSON with OIDC: {"endpoint":"...","store_id":"...","oidc":{"issuer":"...","audience":"...","client_id":"...","client_secret":"..."}}
 func parseOpenFGADSN(dsn string) (*OpenFGAConfig, error) {
 	// If DSN starts with {, treat it as JSON format
 	if strings.HasPrefix(dsn, "{") {

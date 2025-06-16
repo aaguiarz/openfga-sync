@@ -59,6 +59,16 @@ func DefaultFetchOptions() FetchOptions {
 	}
 }
 
+// OIDCConfig contains OIDC authentication configuration
+type OIDCConfig struct {
+	Issuer       string   `json:"issuer"`
+	Audience     string   `json:"audience"`
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	Scopes       []string `json:"scopes"`
+	TokenIssuer  string   `json:"token_issuer"`
+}
+
 // ChangeEvent represents a change event from OpenFGA
 type ChangeEvent struct {
 	// Parsed fields
@@ -120,6 +130,60 @@ type FetcherStats struct {
 // NewOpenFGAFetcher creates a new OpenFGA fetcher
 func NewOpenFGAFetcher(apiURL, storeID, apiToken string, logger *logrus.Logger) (*OpenFGAFetcher, error) {
 	return NewOpenFGAFetcherWithOptions(apiURL, storeID, apiToken, logger, DefaultFetchOptions())
+}
+
+// NewOpenFGAFetcherWithOIDC creates a new OpenFGA fetcher with OIDC authentication
+func NewOpenFGAFetcherWithOIDC(apiURL, storeID string, oidcConfig OIDCConfig, logger *logrus.Logger) (*OpenFGAFetcher, error) {
+	return NewOpenFGAFetcherWithOIDCAndOptions(apiURL, storeID, oidcConfig, logger, DefaultFetchOptions())
+}
+
+// NewOpenFGAFetcherWithOIDCAndOptions creates a new OpenFGA fetcher with OIDC authentication and custom options
+func NewOpenFGAFetcherWithOIDCAndOptions(apiURL, storeID string, oidcConfig OIDCConfig, logger *logrus.Logger, options FetchOptions) (*OpenFGAFetcher, error) {
+	configuration := &client.ClientConfiguration{
+		ApiUrl:  apiURL,
+		StoreId: storeID,
+	}
+
+	// Set up OIDC credentials
+	credentialsConfig := &credentials.Config{
+		ClientCredentialsClientId:       oidcConfig.ClientID,
+		ClientCredentialsClientSecret:   oidcConfig.ClientSecret,
+		ClientCredentialsApiTokenIssuer: oidcConfig.TokenIssuer,
+		ClientCredentialsApiAudience:    oidcConfig.Audience,
+	}
+
+	// Add scopes if provided
+	if len(oidcConfig.Scopes) > 0 {
+		credentialsConfig.ClientCredentialsScopes = strings.Join(oidcConfig.Scopes, " ")
+	}
+
+	creds, err := credentials.NewCredentials(credentials.Credentials{
+		Method: credentials.CredentialsMethodClientCredentials,
+		Config: credentialsConfig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OIDC credentials: %w", err)
+	}
+	configuration.Credentials = creds
+
+	fgaClient, err := client.NewSdkClient(configuration)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OpenFGA client with OIDC: %w", err)
+	}
+
+	var rateLimiter *time.Ticker
+	if options.RateLimitDelay > 0 {
+		rateLimiter = time.NewTicker(options.RateLimitDelay)
+	}
+
+	return &OpenFGAFetcher{
+		client:      fgaClient,
+		storeID:     storeID,
+		logger:      logger,
+		options:     options,
+		rateLimiter: rateLimiter,
+		stats:       FetcherStats{},
+	}, nil
 }
 
 // NewOpenFGAFetcherWithOptions creates a new OpenFGA fetcher with custom options
