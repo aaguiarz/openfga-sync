@@ -374,5 +374,8 @@ func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{},
 
 // Close closes the database connection
 func (p *PostgresAdapter) Close() error {
+	if p.db == nil {
+		return nil
+	}
 	return p.db.Close()
 }
