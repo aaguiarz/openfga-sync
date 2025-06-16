@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,4 +263,181 @@ func TestSQLiteAdapter_ModeValidation(t *testing.T) {
 	if err == nil {
 		t.Error("Expected ApplyChanges to fail in changelog mode")
 	}
+}
+
+func TestSQLiteAdapter_ConditionSupport(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+
+	// Test changelog mode with conditions
+	changelogAdapter, err := NewSQLiteAdapter(":memory:", config.StorageModeChangelog, logger)
+	if err != nil {
+		t.Fatalf("Failed to create changelog adapter: %v", err)
+	}
+	defer changelogAdapter.Close()
+
+	// Test stateful mode with conditions
+	statefulAdapter, err := NewSQLiteAdapter(":memory:", config.StorageModeStateful, logger)
+	if err != nil {
+		t.Fatalf("Failed to create stateful adapter: %v", err)
+	}
+	defer statefulAdapter.Close()
+
+	ctx := context.Background()
+
+	// Test changes with conditions
+	changesWithConditions := []fetcher.ChangeEvent{
+		{
+			Operation:  "WRITE",
+			ObjectType: "document",
+			ObjectID:   "sensitive_doc",
+			Relation:   "viewer",
+			UserType:   "employee",
+			UserID:     "alice",
+			Condition:  `{"name":"ip_allowlist","context":{"allowed_ips":["192.168.1.1"]}}`,
+			Timestamp:  time.Now(),
+		},
+		{
+			Operation:  "WRITE",
+			ObjectType: "folder",
+			ObjectID:   "financial_reports",
+			Relation:   "editor",
+			UserType:   "employee",
+			UserID:     "bob",
+			Condition:  `{"name":"time_based"}`,
+			Timestamp:  time.Now(),
+		},
+		{
+			Operation:  "WRITE",
+			ObjectType: "document",
+			ObjectID:   "public_doc",
+			Relation:   "viewer",
+			UserType:   "user",
+			UserID:     "charlie",
+			Condition:  "", // No condition
+			Timestamp:  time.Now(),
+		},
+	}
+
+	// Test changelog mode with conditions
+	t.Run("changelog_mode_with_conditions", func(t *testing.T) {
+		err := changelogAdapter.WriteChanges(ctx, changesWithConditions)
+		if err != nil {
+			t.Errorf("WriteChanges() error = %v", err)
+		}
+
+		// Verify data was stored with conditions
+		rows, err := changelogAdapter.db.QueryContext(ctx, "SELECT object_id, condition FROM fga_changelog WHERE condition IS NOT NULL ORDER BY object_id")
+		if err != nil {
+			t.Fatalf("Failed to query changelog: %v", err)
+		}
+		defer rows.Close()
+
+		conditionCount := 0
+		for rows.Next() {
+			var objectID, condition string
+			if err := rows.Scan(&objectID, &condition); err != nil {
+				t.Fatalf("Failed to scan row: %v", err)
+			}
+
+			conditionCount++
+			if objectID == "sensitive_doc" {
+				if !strings.Contains(condition, "ip_allowlist") {
+					t.Errorf("Expected condition with ip_allowlist for sensitive_doc, got: %s", condition)
+				}
+			} else if objectID == "financial_reports" {
+				if !strings.Contains(condition, "time_based") {
+					t.Errorf("Expected condition with time_based for financial_reports, got: %s", condition)
+				}
+			}
+		}
+
+		if conditionCount != 2 {
+			t.Errorf("Expected 2 records with conditions, got %d", conditionCount)
+		}
+	})
+
+	// Test stateful mode with conditions
+	t.Run("stateful_mode_with_conditions", func(t *testing.T) {
+		err := statefulAdapter.ApplyChanges(ctx, changesWithConditions)
+		if err != nil {
+			t.Errorf("ApplyChanges() error = %v", err)
+		}
+
+		// Verify data was stored with conditions
+		rows, err := statefulAdapter.db.QueryContext(ctx, "SELECT object_id, condition FROM fga_tuples WHERE condition IS NOT NULL ORDER BY object_id")
+		if err != nil {
+			t.Fatalf("Failed to query tuples: %v", err)
+		}
+		defer rows.Close()
+
+		conditionCount := 0
+		for rows.Next() {
+			var objectID, condition string
+			if err := rows.Scan(&objectID, &condition); err != nil {
+				t.Fatalf("Failed to scan row: %v", err)
+			}
+
+			conditionCount++
+			if objectID == "financial_reports" {
+				if !strings.Contains(condition, "time_based") {
+					t.Errorf("Expected condition with time_based for financial_reports, got: %s", condition)
+				}
+			} else if objectID == "sensitive_doc" {
+				if !strings.Contains(condition, "ip_allowlist") {
+					t.Errorf("Expected condition with ip_allowlist for sensitive_doc, got: %s", condition)
+				}
+			}
+		}
+
+		if conditionCount != 2 {
+			t.Errorf("Expected 2 records with conditions, got %d", conditionCount)
+		}
+
+		// Test that records without conditions also exist
+		var totalCount int
+		err = statefulAdapter.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM fga_tuples").Scan(&totalCount)
+		if err != nil {
+			t.Fatalf("Failed to count total tuples: %v", err)
+		}
+
+		if totalCount != 3 {
+			t.Errorf("Expected 3 total tuples, got %d", totalCount)
+		}
+	})
+
+	// Test condition updates in stateful mode
+	t.Run("condition_updates_stateful", func(t *testing.T) {
+		// Update the condition for an existing tuple
+		updateChanges := []fetcher.ChangeEvent{
+			{
+				Operation:  "WRITE",
+				ObjectType: "document",
+				ObjectID:   "sensitive_doc",
+				Relation:   "viewer",
+				UserType:   "employee",
+				UserID:     "alice",
+				Condition:  `{"name":"geo_restriction","context":{"allowed_countries":["US","CA"]}}`,
+				Timestamp:  time.Now(),
+			},
+		}
+
+		err := statefulAdapter.ApplyChanges(ctx, updateChanges)
+		if err != nil {
+			t.Errorf("ApplyChanges() update error = %v", err)
+		}
+
+		// Verify the condition was updated
+		var condition string
+		err = statefulAdapter.db.QueryRowContext(ctx,
+			"SELECT condition FROM fga_tuples WHERE object_type = ? AND object_id = ? AND relation = ? AND user_type = ? AND user_id = ?",
+			"document", "sensitive_doc", "viewer", "employee", "alice").Scan(&condition)
+		if err != nil {
+			t.Fatalf("Failed to query updated condition: %v", err)
+		}
+
+		if !strings.Contains(condition, "geo_restriction") {
+			t.Errorf("Expected updated condition with geo_restriction, got: %s", condition)
+		}
+	})
 }

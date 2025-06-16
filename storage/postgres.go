@@ -73,6 +73,7 @@ func (p *PostgresAdapter) initSchema() error {
 				user_type VARCHAR(100) NOT NULL,
 				user_id VARCHAR(255) NOT NULL,
 				timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+				condition JSONB,
 				raw_event JSONB,
 				created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 			)`,
@@ -90,6 +91,7 @@ func (p *PostgresAdapter) initSchema() error {
 				relation VARCHAR(100) NOT NULL,
 				user_type VARCHAR(100) NOT NULL,
 				user_id VARCHAR(255) NOT NULL,
+				condition JSONB,
 				created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 				updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 				PRIMARY KEY (object_type, object_id, relation, user_type, user_id)
@@ -126,8 +128,8 @@ func (p *PostgresAdapter) WriteChanges(ctx context.Context, changes []fetcher.Ch
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO fga_changelog (change_type, object_type, object_id, relation, user_type, user_id, timestamp, raw_event)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO fga_changelog (change_type, object_type, object_id, relation, user_type, user_id, timestamp, condition, raw_event)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -141,14 +143,21 @@ func (p *PostgresAdapter) WriteChanges(ctx context.Context, changes []fetcher.Ch
 			rawEventJSON = []byte("{}")
 		}
 
+		// Handle condition - convert from JSON string to PostgreSQL JSONB
+		var conditionJSONB interface{}
+		if change.Condition != "" {
+			conditionJSONB = change.Condition
+		}
+
 		_, err = stmt.ExecContext(ctx,
 			change.Operation,
-			change.TupleKey.ObjectType,
-			change.TupleKey.ObjectID,
-			change.TupleKey.Relation,
-			change.TupleKey.UserType,
-			change.TupleKey.UserID,
+			change.ObjectType,
+			change.ObjectID,
+			change.Relation,
+			change.UserType,
+			change.UserID,
 			change.Timestamp,
+			conditionJSONB,
 			string(rawEventJSON),
 		)
 		if err != nil {
@@ -181,10 +190,10 @@ func (p *PostgresAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Ch
 	defer tx.Rollback()
 
 	insertStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO fga_tuples (object_type, object_id, relation, user_type, user_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO fga_tuples (object_type, object_id, relation, user_type, user_id, condition)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (object_type, object_id, relation, user_type, user_id)
-		DO UPDATE SET updated_at = NOW()
+		DO UPDATE SET condition = EXCLUDED.condition, updated_at = NOW()
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement: %w", err)
@@ -204,12 +213,19 @@ func (p *PostgresAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Ch
 	for _, change := range changes {
 		switch strings.ToUpper(change.Operation) {
 		case "TUPLE_TO_USERSET_WRITE", "WRITE":
+			// Handle condition - convert from JSON string to PostgreSQL JSONB
+			var conditionJSONB interface{}
+			if change.Condition != "" {
+				conditionJSONB = change.Condition
+			}
+
 			_, err = insertStmt.ExecContext(ctx,
-				change.TupleKey.ObjectType,
-				change.TupleKey.ObjectID,
-				change.TupleKey.Relation,
-				change.TupleKey.UserType,
-				change.TupleKey.UserID,
+				change.ObjectType,
+				change.ObjectID,
+				change.Relation,
+				change.UserType,
+				change.UserID,
+				conditionJSONB,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to insert/update tuple: %w", err)
@@ -217,11 +233,11 @@ func (p *PostgresAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Ch
 			insertCount++
 		case "TUPLE_TO_USERSET_DELETE", "DELETE":
 			_, err = deleteStmt.ExecContext(ctx,
-				change.TupleKey.ObjectType,
-				change.TupleKey.ObjectID,
-				change.TupleKey.Relation,
-				change.TupleKey.UserType,
-				change.TupleKey.UserID,
+				change.ObjectType,
+				change.ObjectID,
+				change.Relation,
+				change.UserType,
+				change.UserID,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to delete tuple: %w", err)

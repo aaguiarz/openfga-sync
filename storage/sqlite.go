@@ -86,6 +86,7 @@ func (s *SQLiteAdapter) initSchema() error {
 				user_type TEXT NOT NULL,
 				user_id TEXT NOT NULL,
 				timestamp DATETIME NOT NULL,
+				condition TEXT,
 				raw_event TEXT,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`,
@@ -104,6 +105,7 @@ func (s *SQLiteAdapter) initSchema() error {
 				relation TEXT NOT NULL,
 				user_type TEXT NOT NULL,
 				user_id TEXT NOT NULL,
+				condition TEXT,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				PRIMARY KEY (object_type, object_id, relation, user_type, user_id)
@@ -141,8 +143,8 @@ func (s *SQLiteAdapter) WriteChanges(ctx context.Context, changes []fetcher.Chan
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO fga_changelog (change_type, object_type, object_id, relation, user_type, user_id, timestamp, raw_event)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO fga_changelog (change_type, object_type, object_id, relation, user_type, user_id, timestamp, condition, raw_event)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -156,14 +158,21 @@ func (s *SQLiteAdapter) WriteChanges(ctx context.Context, changes []fetcher.Chan
 			rawEventJSON = []byte("{}")
 		}
 
+		// Handle condition - store as JSON string in TEXT field
+		var conditionText interface{}
+		if change.Condition != "" {
+			conditionText = change.Condition
+		}
+
 		_, err = stmt.ExecContext(ctx,
 			change.Operation,
-			change.TupleKey.ObjectType,
-			change.TupleKey.ObjectID,
-			change.TupleKey.Relation,
-			change.TupleKey.UserType,
-			change.TupleKey.UserID,
+			change.ObjectType,
+			change.ObjectID,
+			change.Relation,
+			change.UserType,
+			change.UserID,
 			change.Timestamp.Format("2006-01-02 15:04:05.000"),
+			conditionText,
 			string(rawEventJSON),
 		)
 		if err != nil {
@@ -197,8 +206,8 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 
 	// SQLite uses INSERT OR REPLACE for upsert functionality
 	insertStmt, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO fga_tuples (object_type, object_id, relation, user_type, user_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 
+		INSERT OR REPLACE INTO fga_tuples (object_type, object_id, relation, user_type, user_id, condition, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 
 			COALESCE((SELECT created_at FROM fga_tuples WHERE object_type = ? AND object_id = ? AND relation = ? AND user_type = ? AND user_id = ?), CURRENT_TIMESTAMP),
 			CURRENT_TIMESTAMP)
 	`)
@@ -220,18 +229,25 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 	for _, change := range changes {
 		switch strings.ToUpper(change.Operation) {
 		case "TUPLE_TO_USERSET_WRITE", "WRITE":
+			// Handle condition - store as JSON string in TEXT field
+			var conditionText interface{}
+			if change.Condition != "" {
+				conditionText = change.Condition
+			}
+
 			_, err = insertStmt.ExecContext(ctx,
-				change.TupleKey.ObjectType,
-				change.TupleKey.ObjectID,
-				change.TupleKey.Relation,
-				change.TupleKey.UserType,
-				change.TupleKey.UserID,
+				change.ObjectType,
+				change.ObjectID,
+				change.Relation,
+				change.UserType,
+				change.UserID,
+				conditionText,
 				// Parameters for the COALESCE subquery
-				change.TupleKey.ObjectType,
-				change.TupleKey.ObjectID,
-				change.TupleKey.Relation,
-				change.TupleKey.UserType,
-				change.TupleKey.UserID,
+				change.ObjectType,
+				change.ObjectID,
+				change.Relation,
+				change.UserType,
+				change.UserID,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to insert/update tuple: %w", err)
@@ -239,11 +255,11 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 			insertCount++
 		case "TUPLE_TO_USERSET_DELETE", "DELETE":
 			_, err = deleteStmt.ExecContext(ctx,
-				change.TupleKey.ObjectType,
-				change.TupleKey.ObjectID,
-				change.TupleKey.Relation,
-				change.TupleKey.UserType,
-				change.TupleKey.UserID,
+				change.ObjectType,
+				change.ObjectID,
+				change.Relation,
+				change.UserType,
+				change.UserID,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to delete tuple: %w", err)
