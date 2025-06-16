@@ -290,6 +290,121 @@ spec:
           value: "true"
 ```
 
+### HTTP Endpoints & Monitoring
+
+The service exposes HTTP endpoints for health checks and metrics on the configured server port (default: 8080).
+
+#### Health Check Endpoints
+
+**Health Endpoint: `/healthz`**
+```bash
+curl http://localhost:8080/healthz
+```
+
+Response:
+```json
+{
+  "status": "UP",
+  "service": "openfga-sync",
+  "version": "1.0.0",
+  "uptime": "2m30s",
+  "details": {
+    "backend_type": "postgres",
+    "storage_mode": "changelog",
+    "poll_interval": "5s"
+  }
+}
+```
+
+**Readiness Endpoint: `/readyz`**
+```bash
+curl http://localhost:8080/readyz
+```
+
+Response:
+```json
+{
+  "status": "READY",
+  "service": "openfga-sync",
+  "dependencies": {
+    "service_ready": "OK"
+  }
+}
+```
+
+#### Prometheus Metrics
+
+**Metrics Endpoint: `/metrics`**
+```bash
+curl http://localhost:8080/metrics
+```
+
+The service exposes comprehensive Prometheus metrics:
+
+**Change Processing Metrics:**
+- `openfga_sync_changes_processed_total` - Total changes processed successfully
+- `openfga_sync_changes_errors_total` - Total change processing errors  
+- `openfga_sync_changes_lag_seconds` - Lag between latest change timestamp and current time
+
+**Sync Operation Metrics:**
+- `openfga_sync_duration_seconds` - Histogram of sync operation durations
+- `openfga_sync_last_timestamp` - Unix timestamp of last successful sync
+
+**OpenFGA API Metrics:**
+- `openfga_sync_openfga_requests_total{status="success|error"}` - API request counts by status
+- `openfga_sync_openfga_request_duration_seconds{endpoint="changes"}` - API request duration histogram
+- `openfga_sync_openfga_last_successful_fetch` - Unix timestamp of last successful fetch
+
+**Storage Metrics:**
+- `openfga_sync_storage_operations_total{operation,status}` - Storage operation counts
+- `openfga_sync_storage_operation_duration_seconds{operation}` - Storage operation durations
+- `openfga_sync_storage_connection_status` - Storage connection status (1=connected, 0=disconnected)
+
+**Service Health Metrics:**
+- `openfga_sync_service_uptime_seconds_total` - Total service uptime
+- `openfga_sync_service_start_timestamp` - Service start timestamp
+
+#### Configuration
+
+Enable metrics in your configuration:
+```yaml
+server:
+  port: 8080  # HTTP server port
+
+observability:
+  metrics:
+    enabled: true     # Enable Prometheus metrics
+    path: "/metrics"  # Metrics endpoint path (default: /metrics)
+```
+
+#### Monitoring Integration
+
+**Prometheus Configuration:**
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'openfga-sync'
+    static_configs:
+      - targets: ['openfga-sync:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+```
+
+**Kubernetes ServiceMonitor:**
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openfga-sync
+spec:
+  selector:
+    matchLabels:
+      app: openfga-sync
+  endpoints:
+  - port: http
+    path: /metrics
+```
+
 ### Database Setup
 
 The service automatically creates and manages database schemas based on the storage mode:

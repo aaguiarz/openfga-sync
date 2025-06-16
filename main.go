@@ -11,6 +11,8 @@ import (
 
 	"github.com/aaguiarz/openfga-sync/config"
 	"github.com/aaguiarz/openfga-sync/fetcher"
+	"github.com/aaguiarz/openfga-sync/metrics"
+	"github.com/aaguiarz/openfga-sync/server"
 	"github.com/aaguiarz/openfga-sync/storage"
 	"github.com/sirupsen/logrus"
 )
@@ -47,7 +49,15 @@ func main() {
 		"backend_type":     cfg.Backend.Type,
 		"storage_mode":     cfg.Backend.Mode,
 		"poll_interval":    cfg.Service.PollInterval,
+		"server_port":      cfg.Server.Port,
+		"metrics_enabled":  cfg.Observability.Metrics.Enabled,
 	}).Info("Starting OpenFGA sync service")
+
+	// Initialize metrics
+	metricsCollector := metrics.New()
+
+	// Initialize HTTP server
+	httpServer := server.New(cfg, logger, metricsCollector)
 
 	// Initialize storage adapter
 	storageAdapter, err := storage.NewStorageAdapter(cfg, logger)
@@ -87,6 +97,18 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Start HTTP server
+	if err := httpServer.Start(ctx); err != nil {
+		logger.WithError(err).Fatal("Failed to start HTTP server")
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := httpServer.Stop(shutdownCtx); err != nil {
+			logger.WithError(err).Error("Failed to stop HTTP server gracefully")
+		}
+	}()
+
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -97,9 +119,34 @@ func main() {
 		cancel()
 	}()
 
+	// Mark service as ready after initialization
+	httpServer.SetReady(true)
+
+	// Start background goroutine to monitor storage connection status
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Check storage connection status
+				if stats, err := storageAdapter.GetStats(ctx); err == nil {
+					if status, ok := stats["connection_status"].(string); ok {
+						metricsCollector.UpdateStorageConnectionStatus(status == "healthy" || status == "connected")
+					}
+				} else {
+					metricsCollector.UpdateStorageConnectionStatus(false)
+				}
+			}
+		}
+	}()
+
 	// Start the sync process
 	logger.Info("OpenFGA sync service started successfully")
-	if err := runSyncLoop(ctx, fgaFetcher, storageAdapter, cfg, logger); err != nil {
+	if err := runSyncLoop(ctx, fgaFetcher, storageAdapter, cfg, logger, metricsCollector); err != nil {
 		logger.WithError(err).Error("Sync loop failed")
 	}
 
@@ -107,7 +154,7 @@ func main() {
 }
 
 // runSyncLoop runs the main synchronization loop
-func runSyncLoop(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storageAdapter storage.StorageAdapter, cfg *config.Config, logger *logrus.Logger) error {
+func runSyncLoop(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storageAdapter storage.StorageAdapter, cfg *config.Config, logger *logrus.Logger, metrics *metrics.Metrics) error {
 	// Get the last continuation token
 	continuationToken, err := storageAdapter.GetLastContinuationToken(ctx)
 	if err != nil {
@@ -124,8 +171,9 @@ func runSyncLoop(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := syncChanges(ctx, fgaFetcher, storageAdapter, cfg, &continuationToken, logger); err != nil {
+			if err := syncChanges(ctx, fgaFetcher, storageAdapter, cfg, &continuationToken, logger, metrics); err != nil {
 				logger.WithError(err).Error("Failed to sync changes")
+				metrics.RecordChangesError()
 				// Continue running despite errors
 			}
 		}
@@ -133,12 +181,23 @@ func runSyncLoop(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 }
 
 // syncChanges fetches and stores changes from OpenFGA
-func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storageAdapter storage.StorageAdapter, cfg *config.Config, continuationToken *string, logger *logrus.Logger) error {
+func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storageAdapter storage.StorageAdapter, cfg *config.Config, continuationToken *string, logger *logrus.Logger, metrics *metrics.Metrics) error {
+	syncStart := time.Now()
+	defer func() {
+		metrics.RecordSyncDuration(time.Since(syncStart))
+	}()
+
 	// Use enhanced fetch with retry logic
+	fetchStart := time.Now()
 	result, err := fgaFetcher.FetchChangesWithRetry(ctx, *continuationToken, cfg.Service.BatchSize)
+	fetchDuration := time.Since(fetchStart)
+	
 	if err != nil {
+		metrics.RecordOpenFGARequest("error", fetchDuration, "changes")
 		return fmt.Errorf("failed to fetch changes: %w", err)
 	}
+	
+	metrics.RecordOpenFGARequest("success", fetchDuration, "changes")
 
 	if len(result.Changes) == 0 {
 		logger.Debug("No new changes found")
@@ -155,23 +214,54 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	}).Debug("Fetcher statistics")
 
 	// Apply changes based on storage mode
+	storageStart := time.Now()
+	var storageErr error
+	
 	if cfg.IsChangelogMode() {
-		if err := storageAdapter.WriteChanges(ctx, result.Changes); err != nil {
-			return fmt.Errorf("failed to write changes: %w", err)
+		storageErr = storageAdapter.WriteChanges(ctx, result.Changes)
+		if storageErr != nil {
+			metrics.RecordStorageOperation("write", "error", time.Since(storageStart))
+			return fmt.Errorf("failed to write changes: %w", storageErr)
 		}
+		metrics.RecordStorageOperation("write", "success", time.Since(storageStart))
 	} else if cfg.IsStatefulMode() {
-		if err := storageAdapter.ApplyChanges(ctx, result.Changes); err != nil {
-			return fmt.Errorf("failed to apply changes: %w", err)
+		storageErr = storageAdapter.ApplyChanges(ctx, result.Changes)
+		if storageErr != nil {
+			metrics.RecordStorageOperation("apply", "error", time.Since(storageStart))
+			return fmt.Errorf("failed to apply changes: %w", storageErr)
 		}
+		metrics.RecordStorageOperation("apply", "success", time.Since(storageStart))
 	} else {
 		return fmt.Errorf("unsupported storage mode: %s", cfg.Backend.Mode)
 	}
 
+	// Record successful change processing
+	metrics.RecordChangesProcessed(len(result.Changes))
+
 	if result.ContinuationToken != "" {
+		tokenStart := time.Now()
 		if err := storageAdapter.SaveContinuationToken(ctx, result.ContinuationToken); err != nil {
+			metrics.RecordStorageOperation("save_token", "error", time.Since(tokenStart))
 			return fmt.Errorf("failed to save continuation token: %w", err)
 		}
+		metrics.RecordStorageOperation("save_token", "success", time.Since(tokenStart))
 		*continuationToken = result.ContinuationToken
+	}
+
+	// Calculate and record lag if we have changes with timestamps
+	if len(result.Changes) > 0 {
+		// Get the timestamp of the most recent change
+		var mostRecentChange time.Time
+		for _, change := range result.Changes {
+			if change.Timestamp.After(mostRecentChange) {
+				mostRecentChange = change.Timestamp
+			}
+		}
+		
+		if !mostRecentChange.IsZero() {
+			lagSeconds := time.Since(mostRecentChange).Seconds()
+			metrics.UpdateChangesLag(lagSeconds)
+		}
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -180,6 +270,7 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 		"storage_mode":      cfg.Backend.Mode,
 		"has_more":          result.HasMore,
 		"total_fetched":     result.TotalFetched,
+		"sync_duration_ms":  time.Since(syncStart).Milliseconds(),
 	}).Info("Successfully processed changes batch")
 
 	return nil

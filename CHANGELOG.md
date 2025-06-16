@@ -5,6 +5,49 @@ All notable changes to the OpenFGA Sync Service will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2024-06-16
+
+### Added
+
+#### HTTP Endpoints & Prometheus Metrics
+- **Health Check Endpoints**: `/healthz` and `/readyz` returning 200 OK with service status
+- **Prometheus Metrics Endpoint**: `/metrics` using `prometheus/client_golang`
+- **Comprehensive Metrics Collection**:
+  - Change processing metrics (count, errors, lag)
+  - Sync operation durations and timestamps
+  - OpenFGA API request metrics (count, duration, success/error rates)
+  - Storage operation metrics (count, duration, connection status)
+  - Service health metrics (uptime, start timestamp)
+
+#### New Packages
+- `metrics/` package for Prometheus metrics management
+- `server/` package for HTTP endpoint handling
+- Integrated HTTP server running alongside sync loop
+
+#### Enhanced Storage Interface
+- Added `GetStats()` method to `StorageAdapter` interface
+- Implemented statistics reporting in all storage adapters
+- Background monitoring of storage connection status
+
+#### Configuration Extensions
+- `server.port` configuration for HTTP endpoints
+- `observability.metrics.enabled` and `observability.metrics.path` settings
+- Environment variable support for all new configurations
+
+#### Documentation & Testing
+- Comprehensive HTTP endpoints documentation in README.md
+- Prometheus integration examples and Kubernetes ServiceMonitor configs
+- Test scripts for endpoint validation (`test_comprehensive.sh`)
+- Complete implementation documentation (`HTTP_METRICS_IMPLEMENTATION.md`)
+
+### Changed
+- Enhanced main service initialization with HTTP server integration
+- Extended sync loop with comprehensive metrics tracking
+- Updated go.mod with Prometheus client dependencies
+
+### Dependencies
+- Added `github.com/prometheus/client_golang v1.22.0`
+
 ## [1.1.0] - 2024-06-15
 
 ### Added

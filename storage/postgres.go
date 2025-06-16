@@ -262,6 +262,74 @@ func (p *PostgresAdapter) SaveContinuationToken(ctx context.Context, token strin
 	return nil
 }
 
+// GetStats returns statistics about the PostgreSQL adapter
+func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+	
+	// Basic adapter info
+	stats["adapter_type"] = "postgres"
+	stats["storage_mode"] = string(p.mode)
+	
+	// Test database connection
+	if err := p.db.PingContext(ctx); err != nil {
+		stats["connection_status"] = "error"
+		stats["connection_error"] = err.Error()
+		return stats, nil
+	}
+	stats["connection_status"] = "healthy"
+	
+	// Get database-specific stats based on mode
+	if p.mode == config.StorageModeChangelog {
+		var count int64
+		err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM fga_changelog").Scan(&count)
+		if err != nil {
+			stats["query_error"] = err.Error()
+		} else {
+			stats["changelog_entries"] = count
+		}
+		
+		// Get count by change type
+		rows, err := p.db.QueryContext(ctx, "SELECT change_type, COUNT(*) FROM fga_changelog GROUP BY change_type")
+		if err == nil {
+			defer rows.Close()
+			changeTypeStats := make(map[string]int64)
+			for rows.Next() {
+				var changeType string
+				var count int64
+				if err := rows.Scan(&changeType, &count); err == nil {
+					changeTypeStats[changeType] = count
+				}
+			}
+			stats["by_change_type"] = changeTypeStats
+		}
+	} else if p.mode == config.StorageModeStateful {
+		var count int64
+		err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM fga_tuples").Scan(&count)
+		if err != nil {
+			stats["query_error"] = err.Error()
+		} else {
+			stats["current_tuples"] = count
+		}
+		
+		// Get count by object type
+		rows, err := p.db.QueryContext(ctx, "SELECT object_type, COUNT(*) FROM fga_tuples GROUP BY object_type")
+		if err == nil {
+			defer rows.Close()
+			objectTypeStats := make(map[string]int64)
+			for rows.Next() {
+				var objectType string
+				var count int64
+				if err := rows.Scan(&objectType, &count); err == nil {
+					objectTypeStats[objectType] = count
+				}
+			}
+			stats["by_object_type"] = objectTypeStats
+		}
+	}
+	
+	return stats, nil
+}
+
 // Close closes the database connection
 func (p *PostgresAdapter) Close() error {
 	return p.db.Close()

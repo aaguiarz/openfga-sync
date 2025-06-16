@@ -23,6 +23,9 @@ type StorageAdapter interface {
 	// SaveContinuationToken saves the continuation token for resuming processing
 	SaveContinuationToken(ctx context.Context, token string) error
 
+	// GetStats returns statistics about the storage adapter
+	GetStats(ctx context.Context) (map[string]interface{}, error)
+
 	// Close closes the storage connection
 	Close() error
 }
