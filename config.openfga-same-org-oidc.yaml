@@ -24,11 +24,11 @@ openfga:
 backend:
   type: "openfga"
   # Simplified DSN - same OIDC config as source, different store
-  dsn: '{
+  dsn: {
     "endpoint": "https://api.us1.fga.dev",
     "store_id": "01HXXX-STAGING-STORE-ID",
     "inherit_auth": true
-  }'
+  }
   mode: "changelog"
 
 # Service configuration optimized for same-organization sync

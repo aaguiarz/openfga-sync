@@ -25,7 +25,7 @@ openfga:
 backend:
   type: "openfga"                                          # Storage type: openfga for sync to another FGA instance
   # DSN format for OpenFGA with OIDC authentication (JSON format)
-  dsn: '{
+  dsn: {
     "endpoint": "https://api.eu1.fga.dev",
     "store_id": "01HXXX-TARGET-STORE-ID",
     "oidc": {
@@ -36,7 +36,7 @@ backend:
       "scopes": ["write:tuples", "read:tuples", "read:stores"],
       "token_issuer": "https://target-auth0-domain.auth0.com/"
     }
-  }'
+  }
   mode: "changelog"                                        # Storage mode: changelog for OpenFGA-to-OpenFGA sync
 
 # Service configuration
