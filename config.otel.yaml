@@ -1,0 +1,52 @@
+# OpenFGA Sync Service - OpenTelemetry Demo Configuration
+# This configuration enables OpenTelemetry tracing and metrics
+
+# Server configuration for health/metrics endpoints
+server:
+  port: 8080
+
+# OpenFGA instance configuration
+openfga:
+  endpoint: "http://localhost:8080"
+  store_id: "demo-store-id"
+  token: ""
+
+# Backend storage configuration - using SQLite for simplicity
+backend:
+  type: "sqlite"
+  dsn: ":memory:"
+  mode: "changelog"
+
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"
+
+# Observability and monitoring with OpenTelemetry enabled
+observability:
+  opentelemetry:
+    endpoint: "http://localhost:4318"  # OTLP HTTP endpoint
+    service_name: "openfga-sync"
+    enabled: true                      # Enable OpenTelemetry tracing
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+# Service behavior configuration  
+service:
+  poll_interval: "5s"
+  batch_size: 100
+  max_retries: 3
+  retry_delay: "1s"
+  max_changes: 0
+  request_timeout: "30s"
+  max_retry_delay: "5s"
+  backoff_factor: 2.0
+  rate_limit_delay: "50ms"
+  enable_validation: true
+
+# Kubernetes leader election (disabled for demo)
+leadership:
+  enabled: false
+  namespace: "default"
+  lock_name: "openfga-sync-leader"

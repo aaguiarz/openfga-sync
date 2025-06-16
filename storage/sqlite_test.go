@@ -110,26 +110,22 @@ func TestSQLiteAdapter_WriteChanges(t *testing.T) {
 	ctx := context.Background()
 	changes := []fetcher.ChangeEvent{
 		{
-			Operation: "WRITE",
-			TupleKey: fetcher.TupleKey{
-				ObjectType: "document",
-				ObjectID:   "readme",
-				Relation:   "viewer",
-				UserType:   "user",
-				UserID:     "alice",
-			},
-			Timestamp: time.Now(),
+			Operation:  "WRITE",
+			ObjectType: "document",
+			ObjectID:   "readme",
+			Relation:   "viewer",
+			UserType:   "user",
+			UserID:     "alice",
+			Timestamp:  time.Now(),
 		},
 		{
-			Operation: "DELETE",
-			TupleKey: fetcher.TupleKey{
-				ObjectType: "document",
-				ObjectID:   "readme",
-				Relation:   "editor",
-				UserType:   "user",
-				UserID:     "bob",
-			},
-			Timestamp: time.Now(),
+			Operation:  "DELETE",
+			ObjectType: "document",
+			ObjectID:   "readme",
+			Relation:   "editor",
+			UserType:   "user",
+			UserID:     "bob",
+			Timestamp:  time.Now(),
 		},
 	}
 
@@ -162,26 +158,22 @@ func TestSQLiteAdapter_ApplyChanges(t *testing.T) {
 	ctx := context.Background()
 	changes := []fetcher.ChangeEvent{
 		{
-			Operation: "WRITE",
-			TupleKey: fetcher.TupleKey{
-				ObjectType: "document",
-				ObjectID:   "readme",
-				Relation:   "viewer",
-				UserType:   "user",
-				UserID:     "alice",
-			},
-			Timestamp: time.Now(),
+			Operation:  "WRITE",
+			ObjectType: "document",
+			ObjectID:   "readme",
+			Relation:   "viewer",
+			UserType:   "user",
+			UserID:     "alice",
+			Timestamp:  time.Now(),
 		},
 		{
-			Operation: "WRITE",
-			TupleKey: fetcher.TupleKey{
-				ObjectType: "document",
-				ObjectID:   "readme",
-				Relation:   "editor",
-				UserType:   "user",
-				UserID:     "bob",
-			},
-			Timestamp: time.Now(),
+			Operation:  "WRITE",
+			ObjectType: "document",
+			ObjectID:   "readme",
+			Relation:   "editor",
+			UserType:   "user",
+			UserID:     "bob",
+			Timestamp:  time.Now(),
 		},
 	}
 
@@ -193,15 +185,13 @@ func TestSQLiteAdapter_ApplyChanges(t *testing.T) {
 	// Apply a delete change
 	deleteChanges := []fetcher.ChangeEvent{
 		{
-			Operation: "DELETE",
-			TupleKey: fetcher.TupleKey{
-				ObjectType: "document",
-				ObjectID:   "readme",
-				Relation:   "viewer",
-				UserType:   "user",
-				UserID:     "alice",
-			},
-			Timestamp: time.Now(),
+			Operation:  "DELETE",
+			ObjectType: "document",
+			ObjectID:   "readme",
+			Relation:   "viewer",
+			UserType:   "user",
+			UserID:     "alice",
+			Timestamp:  time.Now(),
 		},
 	}
 
@@ -240,15 +230,13 @@ func TestSQLiteAdapter_ModeValidation(t *testing.T) {
 	ctx := context.Background()
 	changes := []fetcher.ChangeEvent{
 		{
-			Operation: "WRITE",
-			TupleKey: fetcher.TupleKey{
-				ObjectType: "document",
-				ObjectID:   "readme",
-				Relation:   "viewer",
-				UserType:   "user",
-				UserID:     "alice",
-			},
-			Timestamp: time.Now(),
+			Operation:  "WRITE",
+			ObjectType: "document",
+			ObjectID:   "readme",
+			Relation:   "viewer",
+			UserType:   "user",
+			UserID:     "alice",
+			Timestamp:  time.Now(),
 		},
 	}
 

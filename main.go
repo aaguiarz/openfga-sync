@@ -14,7 +14,11 @@ import (
 	"github.com/aaguiarz/openfga-sync/metrics"
 	"github.com/aaguiarz/openfga-sync/server"
 	"github.com/aaguiarz/openfga-sync/storage"
+	"github.com/aaguiarz/openfga-sync/telemetry"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -52,6 +56,23 @@ func main() {
 		"server_port":      cfg.Server.Port,
 		"metrics_enabled":  cfg.Observability.Metrics.Enabled,
 	}).Info("Starting OpenFGA sync service")
+
+	// Initialize OpenTelemetry
+	telemetryProvider, err := telemetry.InitOpenTelemetry(context.Background(), cfg)
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to initialize OpenTelemetry")
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if shutdownErr := telemetryProvider.Shutdown(shutdownCtx); shutdownErr != nil {
+			logger.WithError(shutdownErr).Error("Failed to shutdown OpenTelemetry")
+		}
+	}()
+
+	if cfg.Observability.OpenTelemetry.Enabled {
+		logger.WithField("otel_endpoint", cfg.Observability.OpenTelemetry.Endpoint).Info("OpenTelemetry initialized")
+	}
 
 	// Initialize metrics
 	metricsCollector := metrics.New()
@@ -182,6 +203,18 @@ func runSyncLoop(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 
 // syncChanges fetches and stores changes from OpenFGA
 func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storageAdapter storage.StorageAdapter, cfg *config.Config, continuationToken *string, logger *logrus.Logger, metrics *metrics.Metrics) error {
+	// Start OpenTelemetry span for the entire sync operation
+	tracer := otel.Tracer("openfga-sync/main")
+	ctx, span := tracer.Start(ctx, "sync.changes",
+		trace.WithAttributes(
+			attribute.String("sync.continuation_token", *continuationToken),
+			attribute.String("sync.storage_mode", string(cfg.Backend.Mode)),
+			attribute.String("sync.storage_type", cfg.Backend.Type),
+			attribute.Int64("sync.batch_size", int64(cfg.Service.BatchSize)),
+		),
+	)
+	defer span.End()
+
 	syncStart := time.Now()
 	defer func() {
 		metrics.RecordSyncDuration(time.Since(syncStart))
@@ -193,6 +226,8 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	fetchDuration := time.Since(fetchStart)
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("error.type", "fetch_error"))
 		metrics.RecordOpenFGARequest("error", fetchDuration, "changes")
 		return fmt.Errorf("failed to fetch changes: %w", err)
 	}
@@ -200,9 +235,17 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	metrics.RecordOpenFGARequest("success", fetchDuration, "changes")
 
 	if len(result.Changes) == 0 {
+		span.SetAttributes(attribute.Int("sync.changes_found", 0))
 		logger.Debug("No new changes found")
 		return nil
 	}
+
+	// Add span attributes for the fetched data
+	span.SetAttributes(
+		attribute.Int("sync.changes_found", len(result.Changes)),
+		attribute.String("sync.next_token", result.ContinuationToken),
+		attribute.Bool("sync.has_more", result.HasMore),
+	)
 
 	// Log fetcher statistics
 	stats := fgaFetcher.GetStats()
@@ -220,19 +263,28 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	if cfg.IsChangelogMode() {
 		storageErr = storageAdapter.WriteChanges(ctx, result.Changes)
 		if storageErr != nil {
+			span.RecordError(storageErr)
+			span.SetAttributes(attribute.String("error.type", "storage_write_error"))
 			metrics.RecordStorageOperation("write", "error", time.Since(storageStart))
 			return fmt.Errorf("failed to write changes: %w", storageErr)
 		}
 		metrics.RecordStorageOperation("write", "success", time.Since(storageStart))
+		span.SetAttributes(attribute.String("sync.storage_operation", "write"))
 	} else if cfg.IsStatefulMode() {
 		storageErr = storageAdapter.ApplyChanges(ctx, result.Changes)
 		if storageErr != nil {
+			span.RecordError(storageErr)
+			span.SetAttributes(attribute.String("error.type", "storage_apply_error"))
 			metrics.RecordStorageOperation("apply", "error", time.Since(storageStart))
 			return fmt.Errorf("failed to apply changes: %w", storageErr)
 		}
 		metrics.RecordStorageOperation("apply", "success", time.Since(storageStart))
+		span.SetAttributes(attribute.String("sync.storage_operation", "apply"))
 	} else {
-		return fmt.Errorf("unsupported storage mode: %s", cfg.Backend.Mode)
+		err := fmt.Errorf("unsupported storage mode: %s", cfg.Backend.Mode)
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("error.type", "invalid_storage_mode"))
+		return err
 	}
 
 	// Record successful change processing
@@ -241,6 +293,8 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	if result.ContinuationToken != "" {
 		tokenStart := time.Now()
 		if err := storageAdapter.SaveContinuationToken(ctx, result.ContinuationToken); err != nil {
+			span.RecordError(err)
+			span.SetAttributes(attribute.String("error.type", "token_save_error"))
 			metrics.RecordStorageOperation("save_token", "error", time.Since(tokenStart))
 			return fmt.Errorf("failed to save continuation token: %w", err)
 		}
@@ -261,8 +315,15 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 		if !mostRecentChange.IsZero() {
 			lagSeconds := time.Since(mostRecentChange).Seconds()
 			metrics.UpdateChangesLag(lagSeconds)
+			span.SetAttributes(attribute.Float64("sync.lag_seconds", lagSeconds))
 		}
 	}
+
+	// Add final success attributes
+	span.SetAttributes(
+		attribute.Int("sync.changes_processed", len(result.Changes)),
+		attribute.Int64("sync.duration_ms", time.Since(syncStart).Milliseconds()),
+	)
 
 	logger.WithFields(logrus.Fields{
 		"changes_processed": len(result.Changes),

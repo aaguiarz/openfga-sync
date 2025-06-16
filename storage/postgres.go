@@ -11,6 +11,9 @@ import (
 	"github.com/aaguiarz/openfga-sync/fetcher"
 	_ "github.com/lib/pq"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // PostgresAdapter implements StorageAdapter for PostgreSQL
@@ -113,16 +116,30 @@ func (p *PostgresAdapter) initSchema() error {
 
 // WriteChanges writes a batch of change events to PostgreSQL (changelog mode)
 func (p *PostgresAdapter) WriteChanges(ctx context.Context, changes []fetcher.ChangeEvent) error {
+	// Start OpenTelemetry span
+	tracer := otel.Tracer("openfga-sync/storage")
+	ctx, span := tracer.Start(ctx, "postgres.write_changes",
+		trace.WithAttributes(
+			attribute.Int("db.changes_count", len(changes)),
+			attribute.String("db.storage_mode", string(p.mode)),
+			attribute.String("db.system", "postgresql"),
+		),
+	)
+	defer span.End()
+
 	if len(changes) == 0 {
 		return nil
 	}
 
 	if p.mode != config.StorageModeChangelog {
-		return fmt.Errorf("WriteChanges is only supported in changelog mode")
+		err := fmt.Errorf("WriteChanges is only supported in changelog mode")
+		span.RecordError(err)
+		return err
 	}
 
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -132,6 +149,7 @@ func (p *PostgresAdapter) WriteChanges(ctx context.Context, changes []fetcher.Ch
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer stmt.Close()
@@ -161,13 +179,21 @@ func (p *PostgresAdapter) WriteChanges(ctx context.Context, changes []fetcher.Ch
 			string(rawEventJSON),
 		)
 		if err != nil {
+			span.RecordError(err)
 			return fmt.Errorf("failed to insert change: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	// Add success attributes to span
+	span.SetAttributes(
+		attribute.Int("db.rows_affected", len(changes)),
+		attribute.String("db.operation", "insert"),
+	)
 
 	p.logger.WithField("changes_count", len(changes)).Info("Successfully wrote changes to changelog")
 	return nil

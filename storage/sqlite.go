@@ -11,6 +11,9 @@ import (
 	"github.com/aaguiarz/openfga-sync/fetcher"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // SQLiteAdapter implements StorageAdapter for SQLite
@@ -128,16 +131,30 @@ func (s *SQLiteAdapter) initSchema() error {
 
 // WriteChanges writes a batch of change events to SQLite (changelog mode)
 func (s *SQLiteAdapter) WriteChanges(ctx context.Context, changes []fetcher.ChangeEvent) error {
+	// Start OpenTelemetry span
+	tracer := otel.Tracer("openfga-sync/storage")
+	ctx, span := tracer.Start(ctx, "sqlite.write_changes",
+		trace.WithAttributes(
+			attribute.Int("db.changes_count", len(changes)),
+			attribute.String("db.storage_mode", string(s.mode)),
+			attribute.String("db.system", "sqlite"),
+		),
+	)
+	defer span.End()
+
 	if len(changes) == 0 {
 		return nil
 	}
 
 	if s.mode != config.StorageModeChangelog {
-		return fmt.Errorf("WriteChanges is only supported in changelog mode")
+		err := fmt.Errorf("WriteChanges is only supported in changelog mode")
+		span.RecordError(err)
+		return err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -147,6 +164,7 @@ func (s *SQLiteAdapter) WriteChanges(ctx context.Context, changes []fetcher.Chan
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer stmt.Close()
@@ -176,13 +194,21 @@ func (s *SQLiteAdapter) WriteChanges(ctx context.Context, changes []fetcher.Chan
 			string(rawEventJSON),
 		)
 		if err != nil {
+			span.RecordError(err)
 			return fmt.Errorf("failed to insert change: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	// Add success attributes to span
+	span.SetAttributes(
+		attribute.Int("db.rows_affected", len(changes)),
+		attribute.String("db.operation", "insert"),
+	)
 
 	s.logger.WithField("changes_count", len(changes)).Info("Successfully wrote changes to changelog")
 	return nil
@@ -190,16 +216,30 @@ func (s *SQLiteAdapter) WriteChanges(ctx context.Context, changes []fetcher.Chan
 
 // ApplyChanges applies a batch of changes to state table (stateful mode)
 func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.ChangeEvent) error {
+	// Start OpenTelemetry span
+	tracer := otel.Tracer("openfga-sync/storage")
+	ctx, span := tracer.Start(ctx, "sqlite.apply_changes",
+		trace.WithAttributes(
+			attribute.Int("db.changes_count", len(changes)),
+			attribute.String("db.storage_mode", string(s.mode)),
+			attribute.String("db.system", "sqlite"),
+		),
+	)
+	defer span.End()
+
 	if len(changes) == 0 {
 		return nil
 	}
 
 	if s.mode != config.StorageModeStateful {
-		return fmt.Errorf("ApplyChanges is only supported in stateful mode")
+		err := fmt.Errorf("ApplyChanges is only supported in stateful mode")
+		span.RecordError(err)
+		return err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -212,6 +252,7 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 			CURRENT_TIMESTAMP)
 	`)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to prepare insert statement: %w", err)
 	}
 	defer insertStmt.Close()
@@ -221,6 +262,7 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 		WHERE object_type = ? AND object_id = ? AND relation = ? AND user_type = ? AND user_id = ?
 	`)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to prepare delete statement: %w", err)
 	}
 	defer deleteStmt.Close()
@@ -250,6 +292,7 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 				change.UserID,
 			)
 			if err != nil {
+				span.RecordError(err)
 				return fmt.Errorf("failed to insert/update tuple: %w", err)
 			}
 			insertCount++
@@ -262,6 +305,7 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 				change.UserID,
 			)
 			if err != nil {
+				span.RecordError(err)
 				return fmt.Errorf("failed to delete tuple: %w", err)
 			}
 			deleteCount++
@@ -271,8 +315,16 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 	}
 
 	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	// Add success attributes to span
+	span.SetAttributes(
+		attribute.Int("db.inserts", insertCount),
+		attribute.Int("db.deletes", deleteCount),
+		attribute.String("db.operation", "upsert"),
+	)
 
 	s.logger.WithFields(logrus.Fields{
 		"inserts": insertCount,

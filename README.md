@@ -26,7 +26,7 @@ A comprehensive Go service that consumes OpenFGA `/changes` API and synchronizes
 - **Structured Logging**: JSON/text formats with configurable levels
 - **Health Endpoints**: Ready for Kubernetes health checks
 - **Metrics**: Prometheus-compatible metrics endpoint
-- **OpenTelemetry**: Distributed tracing support (planned)
+- **OpenTelemetry**: Distributed tracing and metrics export with OTLP support
 - **Leader Election**: Kubernetes-native HA support (planned)
 
 ## Architecture

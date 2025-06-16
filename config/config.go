@@ -113,6 +113,7 @@ func DefaultConfig() *Config {
 		},
 		Observability: ObservabilityConfig{
 			OpenTelemetry: OpenTelemetryConfig{
+				Endpoint:    "http://localhost:4318",
 				ServiceName: "openfga-sync",
 				Enabled:     false,
 			},

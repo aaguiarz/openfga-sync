@@ -12,6 +12,9 @@ import (
 	"github.com/openfga/go-sdk/client"
 	"github.com/openfga/go-sdk/credentials"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RetryConfig configures retry behavior for OpenFGA API calls
@@ -201,6 +204,17 @@ func (f *OpenFGAFetcher) FetchChanges(ctx context.Context, continuationToken str
 
 // FetchChangesWithPaging fetches changes with enhanced paging support
 func (f *OpenFGAFetcher) FetchChangesWithPaging(ctx context.Context, continuationToken string, pageSize int32) (*FetchResult, error) {
+	// Start OpenTelemetry span
+	tracer := otel.Tracer("openfga-sync/fetcher")
+	ctx, span := tracer.Start(ctx, "openfga.fetch_changes",
+		trace.WithAttributes(
+			attribute.String("openfga.store_id", f.storeID),
+			attribute.String("openfga.continuation_token", continuationToken),
+			attribute.Int64("openfga.page_size", int64(pageSize)),
+		),
+	)
+	defer span.End()
+
 	f.logger.WithFields(logrus.Fields{
 		"continuation_token": continuationToken,
 		"page_size":          pageSize,
@@ -216,6 +230,8 @@ func (f *OpenFGAFetcher) FetchChangesWithPaging(ctx context.Context, continuatio
 
 	response, err := f.client.ReadChanges(ctx).Options(options).Execute()
 	if err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("error.message", err.Error()))
 		return nil, fmt.Errorf("failed to fetch changes: %w", err)
 	}
 
@@ -242,6 +258,13 @@ func (f *OpenFGAFetcher) FetchChangesWithPaging(ctx context.Context, continuatio
 		HasMore:           hasMore,
 		TotalFetched:      len(changes),
 	}
+
+	// Add span attributes for the result
+	span.SetAttributes(
+		attribute.Int("openfga.changes_count", len(changes)),
+		attribute.String("openfga.next_token", nextToken),
+		attribute.Bool("openfga.has_more", hasMore),
+	)
 
 	f.logger.WithFields(logrus.Fields{
 		"changes_count": len(changes),
