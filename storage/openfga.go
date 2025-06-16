@@ -9,6 +9,7 @@ import (
 
 	"github.com/aaguiarz/openfga-sync/config"
 	"github.com/aaguiarz/openfga-sync/fetcher"
+	openfga "github.com/openfga/go-sdk"
 	"github.com/openfga/go-sdk/client"
 	"github.com/openfga/go-sdk/credentials"
 	"github.com/sirupsen/logrus"
@@ -322,11 +323,59 @@ func (o *OpenFGAAdapter) convertToTupleKey(change fetcher.ChangeEvent) client.Cl
 		object = change.ObjectType + ":" + change.ObjectID
 	}
 
-	return client.ClientTupleKey{
+	tupleKey := client.ClientTupleKey{
 		User:     user,
 		Relation: change.Relation,
 		Object:   object,
 	}
+
+	// Handle condition if present
+	if change.Condition != "" {
+		condition, err := o.parseCondition(change.Condition)
+		if err != nil {
+			o.logger.WithFields(logrus.Fields{
+				"error":     err.Error(),
+				"condition": change.Condition,
+			}).Warn("Failed to parse condition, proceeding without condition")
+		} else if condition != nil {
+			tupleKey.Condition = condition
+		}
+	}
+
+	return tupleKey
+}
+
+// parseCondition converts a JSON string condition to RelationshipCondition
+func (o *OpenFGAAdapter) parseCondition(conditionJSON string) (*openfga.RelationshipCondition, error) {
+	if conditionJSON == "" {
+		return nil, nil
+	}
+
+	// Parse the JSON string to extract condition data
+	var conditionData map[string]interface{}
+	if err := json.Unmarshal([]byte(conditionJSON), &conditionData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal condition JSON: %w", err)
+	}
+
+	// Extract condition name (required)
+	name, ok := conditionData["name"].(string)
+	if !ok || name == "" {
+		return nil, fmt.Errorf("condition name is required and must be a string")
+	}
+
+	// Create RelationshipCondition
+	condition := openfga.RelationshipCondition{
+		Name: name,
+	}
+
+	// Extract context if present (optional)
+	if contextData, ok := conditionData["context"]; ok && contextData != nil {
+		if contextMap, ok := contextData.(map[string]interface{}); ok && len(contextMap) > 0 {
+			condition.Context = &contextMap
+		}
+	}
+
+	return &condition, nil
 }
 
 // executeWrite executes a write operation to OpenFGA

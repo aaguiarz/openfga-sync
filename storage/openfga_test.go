@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -459,4 +460,306 @@ func TestOpenFGAAdapter_EmptyChanges(t *testing.T) {
 	if err != nil {
 		t.Errorf("ApplyChanges() with empty changes error = %v", err)
 	}
+}
+
+func TestConvertToTupleKeyWithCondition(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+
+	// Create a mock adapter for testing
+	adapter := &OpenFGAAdapter{
+		logger: logger,
+	}
+
+	tests := []struct {
+		name        string
+		change      fetcher.ChangeEvent
+		expectError bool
+	}{
+		{
+			name: "tuple key with valid condition",
+			change: fetcher.ChangeEvent{
+				ObjectType: "document",
+				ObjectID:   "readme",
+				Relation:   "viewer",
+				UserType:   "user",
+				UserID:     "alice",
+				Operation:  "WRITE",
+				Condition:  `{"name":"ip_allowlist","context":{"allowed_ips":["192.168.1.1","10.0.0.1"]}}`,
+			},
+			expectError: false,
+		},
+		{
+			name: "tuple key with condition name only",
+			change: fetcher.ChangeEvent{
+				ObjectType: "document",
+				ObjectID:   "readme",
+				Relation:   "viewer",
+				UserType:   "user",
+				UserID:     "alice",
+				Operation:  "WRITE",
+				Condition:  `{"name":"time_based"}`,
+			},
+			expectError: false,
+		},
+		{
+			name: "tuple key with invalid condition JSON",
+			change: fetcher.ChangeEvent{
+				ObjectType: "document",
+				ObjectID:   "readme",
+				Relation:   "viewer",
+				UserType:   "user",
+				UserID:     "alice",
+				Operation:  "WRITE",
+				Condition:  `{invalid json}`,
+			},
+			expectError: false, // Should log warning but not fail
+		},
+		{
+			name: "tuple key with condition missing name",
+			change: fetcher.ChangeEvent{
+				ObjectType: "document",
+				ObjectID:   "readme",
+				Relation:   "viewer",
+				UserType:   "user",
+				UserID:     "alice",
+				Operation:  "WRITE",
+				Condition:  `{"context":{"key":"value"}}`,
+			},
+			expectError: false, // Should log warning but not fail
+		},
+		{
+			name: "tuple key without condition",
+			change: fetcher.ChangeEvent{
+				ObjectType: "document",
+				ObjectID:   "readme",
+				Relation:   "viewer",
+				UserType:   "user",
+				UserID:     "alice",
+				Operation:  "WRITE",
+				Condition:  "",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := adapter.convertToTupleKey(tt.change)
+
+			// Verify basic tuple key fields
+			if result.User == "" || result.Relation == "" || result.Object == "" {
+				t.Errorf("convertToTupleKey() returned incomplete result: %+v", result)
+			}
+
+			// Check condition handling
+			if tt.change.Condition != "" && !strings.Contains(tt.change.Condition, "invalid") && !strings.Contains(tt.change.Condition, `"context"`) {
+				// Valid condition case
+				if result.Condition == nil {
+					t.Errorf("Expected condition to be set for valid condition JSON")
+				} else {
+					// Verify condition name is set
+					if result.Condition.Name == "" {
+						t.Errorf("Expected condition name to be set")
+					}
+				}
+			} else if tt.change.Condition == "" {
+				// No condition case
+				if result.Condition != nil {
+					t.Errorf("Expected condition to be nil when no condition provided")
+				}
+			}
+			// For invalid cases, condition might be nil (logged warning but continues)
+		})
+	}
+}
+
+func TestParseCondition(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+
+	adapter := &OpenFGAAdapter{
+		logger: logger,
+	}
+
+	tests := []struct {
+		name          string
+		conditionJSON string
+		expectError   bool
+		expectedName  string
+		expectContext bool
+	}{
+		{
+			name:          "valid condition with context",
+			conditionJSON: `{"name":"ip_allowlist","context":{"allowed_ips":["192.168.1.1"]}}`,
+			expectError:   false,
+			expectedName:  "ip_allowlist",
+			expectContext: true,
+		},
+		{
+			name:          "valid condition without context",
+			conditionJSON: `{"name":"time_based"}`,
+			expectError:   false,
+			expectedName:  "time_based",
+			expectContext: false,
+		},
+		{
+			name:          "empty condition",
+			conditionJSON: "",
+			expectError:   false,
+			expectedName:  "",
+			expectContext: false,
+		},
+		{
+			name:          "invalid JSON",
+			conditionJSON: `{invalid json}`,
+			expectError:   true,
+		},
+		{
+			name:          "missing name field",
+			conditionJSON: `{"context":{"key":"value"}}`,
+			expectError:   true,
+		},
+		{
+			name:          "empty name field",
+			conditionJSON: `{"name":"","context":{"key":"value"}}`,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := adapter.parseCondition(tt.conditionJSON)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if tt.conditionJSON == "" {
+				if result != nil {
+					t.Errorf("Expected nil result for empty condition")
+				}
+				return
+			}
+
+			if result == nil {
+				t.Errorf("Expected non-nil result for valid condition")
+				return
+			}
+
+			if result.Name != tt.expectedName {
+				t.Errorf("Expected name %q, got %q", tt.expectedName, result.Name)
+			}
+
+			if tt.expectContext {
+				if result.Context == nil {
+					t.Errorf("Expected context to be set")
+				}
+			} else {
+				if result.Context != nil {
+					t.Errorf("Expected context to be nil")
+				}
+			}
+		})
+	}
+}
+
+func TestConditionEndToEndFlow(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+
+	// Create a mock adapter for testing
+	adapter := &OpenFGAAdapter{
+		logger: logger,
+	}
+
+	// Simulate a ChangeEvent with condition as it would come from the fetcher
+	changeEvent := fetcher.ChangeEvent{
+		ObjectType: "document",
+		ObjectID:   "sensitive_doc_123",
+		Relation:   "viewer",
+		UserType:   "employee",
+		UserID:     "alice@company.com",
+		Operation:  "WRITE",
+		ChangeType: "tuple_write",
+		Timestamp:  time.Now(),
+		// This simulates how conditions are stored by the fetcher
+		Condition: `{"name":"ip_allowlist","context":{"allowed_ips":["192.168.1.100","10.0.0.50"],"department":"engineering"}}`,
+		RawJSON:   `{"operation":"WRITE","tuple_key":{"user":"employee:alice@company.com","relation":"viewer","object":"document:sensitive_doc_123","condition":{"name":"ip_allowlist","context":{"allowed_ips":["192.168.1.100","10.0.0.50"],"department":"engineering"}}}}`,
+	}
+
+	// Convert to OpenFGA ClientTupleKey
+	tupleKey := adapter.convertToTupleKey(changeEvent)
+
+	// Verify the basic tuple components
+	if tupleKey.User != "employee:alice@company.com" {
+		t.Errorf("Expected user 'employee:alice@company.com', got '%s'", tupleKey.User)
+	}
+	if tupleKey.Relation != "viewer" {
+		t.Errorf("Expected relation 'viewer', got '%s'", tupleKey.Relation)
+	}
+	if tupleKey.Object != "document:sensitive_doc_123" {
+		t.Errorf("Expected object 'document:sensitive_doc_123', got '%s'", tupleKey.Object)
+	}
+
+	// Verify condition is properly parsed and set
+	if tupleKey.Condition == nil {
+		t.Fatal("Expected condition to be set, but it was nil")
+	}
+
+	if tupleKey.Condition.Name != "ip_allowlist" {
+		t.Errorf("Expected condition name 'ip_allowlist', got '%s'", tupleKey.Condition.Name)
+	}
+
+	if tupleKey.Condition.Context == nil {
+		t.Fatal("Expected condition context to be set, but it was nil")
+	}
+
+	context := *tupleKey.Condition.Context
+
+	// Verify context contains expected data
+	if allowedIps, ok := context["allowed_ips"]; ok {
+		if ipsSlice, ok := allowedIps.([]interface{}); ok {
+			if len(ipsSlice) != 2 {
+				t.Errorf("Expected 2 allowed IPs, got %d", len(ipsSlice))
+			}
+			if ipsSlice[0] != "192.168.1.100" {
+				t.Errorf("Expected first IP '192.168.1.100', got '%v'", ipsSlice[0])
+			}
+		} else {
+			t.Error("Expected allowed_ips to be a slice")
+		}
+	} else {
+		t.Error("Expected 'allowed_ips' field in context")
+	}
+
+	if department, ok := context["department"]; ok {
+		if dept, ok := department.(string); ok {
+			if dept != "engineering" {
+				t.Errorf("Expected department 'engineering', got '%s'", dept)
+			}
+		} else {
+			t.Error("Expected department to be a string")
+		}
+	} else {
+		t.Error("Expected 'department' field in context")
+	}
+
+	t.Logf("✅ End-to-end condition flow test passed successfully!")
+	t.Logf("   Condition Name: %s", tupleKey.Condition.Name)
+
+	// Get context keys for logging
+	var keys []string
+	for key := range context {
+		keys = append(keys, key)
+	}
+	t.Logf("   Context Keys: %v", keys)
 }

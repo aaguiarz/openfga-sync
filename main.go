@@ -126,7 +126,7 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -191,12 +191,12 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	fetchStart := time.Now()
 	result, err := fgaFetcher.FetchChangesWithRetry(ctx, *continuationToken, cfg.Service.BatchSize)
 	fetchDuration := time.Since(fetchStart)
-	
+
 	if err != nil {
 		metrics.RecordOpenFGARequest("error", fetchDuration, "changes")
 		return fmt.Errorf("failed to fetch changes: %w", err)
 	}
-	
+
 	metrics.RecordOpenFGARequest("success", fetchDuration, "changes")
 
 	if len(result.Changes) == 0 {
@@ -216,7 +216,7 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 	// Apply changes based on storage mode
 	storageStart := time.Now()
 	var storageErr error
-	
+
 	if cfg.IsChangelogMode() {
 		storageErr = storageAdapter.WriteChanges(ctx, result.Changes)
 		if storageErr != nil {
@@ -257,7 +257,7 @@ func syncChanges(ctx context.Context, fgaFetcher *fetcher.OpenFGAFetcher, storag
 				mostRecentChange = change.Timestamp
 			}
 		}
-		
+
 		if !mostRecentChange.IsZero() {
 			lagSeconds := time.Since(mostRecentChange).Seconds()
 			metrics.UpdateChangesLag(lagSeconds)

@@ -265,11 +265,11 @@ func (p *PostgresAdapter) SaveContinuationToken(ctx context.Context, token strin
 // GetStats returns statistics about the PostgreSQL adapter
 func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
-	
+
 	// Basic adapter info
 	stats["adapter_type"] = "postgres"
 	stats["storage_mode"] = string(p.mode)
-	
+
 	// Test database connection
 	if err := p.db.PingContext(ctx); err != nil {
 		stats["connection_status"] = "error"
@@ -277,7 +277,7 @@ func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{},
 		return stats, nil
 	}
 	stats["connection_status"] = "healthy"
-	
+
 	// Get database-specific stats based on mode
 	if p.mode == config.StorageModeChangelog {
 		var count int64
@@ -287,7 +287,7 @@ func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{},
 		} else {
 			stats["changelog_entries"] = count
 		}
-		
+
 		// Get count by change type
 		rows, err := p.db.QueryContext(ctx, "SELECT change_type, COUNT(*) FROM fga_changelog GROUP BY change_type")
 		if err == nil {
@@ -310,7 +310,7 @@ func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{},
 		} else {
 			stats["current_tuples"] = count
 		}
-		
+
 		// Get count by object type
 		rows, err := p.db.QueryContext(ctx, "SELECT object_type, COUNT(*) FROM fga_tuples GROUP BY object_type")
 		if err == nil {
@@ -326,7 +326,7 @@ func (p *PostgresAdapter) GetStats(ctx context.Context) (map[string]interface{},
 			stats["by_object_type"] = objectTypeStats
 		}
 	}
-	
+
 	return stats, nil
 }
 

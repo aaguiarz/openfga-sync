@@ -66,7 +66,8 @@ type ChangeEvent struct {
 	UserID     string    `json:"user_id"`
 	ChangeType string    `json:"change_type"`
 	Timestamp  time.Time `json:"timestamp"`
-	RawJSON    string    `json:"raw_json"` // Raw JSON from OpenFGA
+	Condition  string    `json:"condition,omitempty"` // Relationship condition (optional)
+	RawJSON    string    `json:"raw_json"`            // Raw JSON from OpenFGA
 
 	// Legacy fields for compatibility
 	TupleKey  TupleKey `json:"tuple_key"`
@@ -353,6 +354,7 @@ func (f *OpenFGAFetcher) parseChangeEvent(change interface{}) (ChangeEvent, erro
 	}
 
 	// Extract tuple key information
+	var condition string
 	if tupleKeyRaw, ok := changeMap["tuple_key"]; ok {
 		if tupleKey, ok := tupleKeyRaw.(map[string]interface{}); ok {
 			if u, ok := tupleKey["user"]; ok {
@@ -363,6 +365,15 @@ func (f *OpenFGAFetcher) parseChangeEvent(change interface{}) (ChangeEvent, erro
 			}
 			if o, ok := tupleKey["object"]; ok {
 				object = fmt.Sprintf("%v", o)
+			}
+			// Extract condition if present
+			if c, ok := tupleKey["condition"]; ok && c != nil {
+				if conditionMap, ok := c.(map[string]interface{}); ok {
+					// Convert condition to JSON string for storage
+					if conditionBytes, err := json.Marshal(conditionMap); err == nil {
+						condition = string(conditionBytes)
+					}
+				}
 			}
 		}
 	}
@@ -386,6 +397,7 @@ func (f *OpenFGAFetcher) parseChangeEvent(change interface{}) (ChangeEvent, erro
 		UserID:     userID,
 		ChangeType: determineChangeType(operation),
 		Timestamp:  timestamp,
+		Condition:  condition,
 		RawJSON:    string(rawJSON),
 
 		// Legacy fields for backward compatibility
