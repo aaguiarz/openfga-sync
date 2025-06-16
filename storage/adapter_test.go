@@ -449,7 +449,7 @@ func TestStorageAdapterFactory(t *testing.T) {
 // TestStorageAdapterConcurrency tests basic concurrency safety
 func TestStorageAdapterConcurrency(t *testing.T) {
 	t.Skip("Skipping concurrency test - SQLite adapter table creation is not thread-safe")
-	
+
 	logger := logrus.New()
 	logger.SetLevel(logrus.WarnLevel)
 
@@ -473,7 +473,7 @@ func TestStorageAdapterConcurrency(t *testing.T) {
 		t.Skip("Table creation race condition in SQLite adapter")
 	})
 
-	// Test concurrent token operations - disabled due to table creation race condition  
+	// Test concurrent token operations - disabled due to table creation race condition
 	t.Run("ConcurrentTokens", func(t *testing.T) {
 		t.Skip("Table creation race condition in SQLite adapter")
 	})
