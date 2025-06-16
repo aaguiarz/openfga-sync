@@ -13,9 +13,31 @@ openfga:
 
 # Backend storage configuration
 backend:
-  type: "postgres"                             # Storage type: postgres, mysql, sqlite, openfga
+  type: "postgres"                             # Storage type: postgres, mysql, sqlite
   dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
   mode: "changelog"                            # Storage mode: changelog or stateful
+
+# Example configurations for different backends:
+# 
+# PostgreSQL:
+#   type: "postgres"
+#   dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
+#   mode: "changelog"
+#
+# SQLite (file-based):
+#   type: "sqlite"
+#   dsn: "/var/lib/openfga-sync/data.db"
+#   mode: "stateful"
+#
+# SQLite (in-memory for testing):
+#   type: "sqlite"
+#   dsn: ":memory:"
+#   mode: "changelog"
+#
+# MySQL (coming soon):
+#   type: "mysql"
+#   dsn: "user:password@tcp(localhost:3306)/openfga_sync?parseTime=true"
+#   mode: "changelog"
 
 # Logging configuration
 logging:
@@ -60,6 +82,11 @@ leadership:
 # BACKEND_TYPE=postgres
 # BACKEND_DSN=postgres://user:password@localhost:5432/openfga_sync?sslmode=disable
 # BACKEND_MODE=changelog
+# 
+# For SQLite:
+# BACKEND_TYPE=sqlite  
+# BACKEND_DSN=/var/lib/openfga-sync/data.db
+# BACKEND_MODE=stateful
 # LOG_LEVEL=info
 # LOG_FORMAT=json
 # OTEL_ENDPOINT=http://otel-collector:4317

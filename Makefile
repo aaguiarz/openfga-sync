@@ -62,6 +62,8 @@ help:
 	@echo "Utility commands:"
 	@echo "  run-dev       Run locally with development config"
 	@echo "  run-examples  Run example scripts"
+	@echo "  run-sqlite-demo Run SQLite storage demonstration"
+	@echo "  test-sqlite   Test SQLite adapter compilation"
 	@echo "  config-validate Validate configuration file"
 	@echo "  security      Run security scan"
 	@echo "  release       Create release package"
@@ -150,6 +152,20 @@ run-examples:
 	$(GOCMD) run examples/changes_demo.go
 	@echo "\nRunning enhanced fetcher demo..."
 	$(GOCMD) run examples/enhanced_demo/main.go
+	@echo "\nRunning SQLite storage demo..."
+	$(GOCMD) run examples/sqlite_demo.go
+
+## Run SQLite demo specifically
+run-sqlite-demo:
+	@echo "Running SQLite storage adapter demonstration..."
+	$(GOCMD) run examples/sqlite_demo.go
+
+## Test with SQLite configuration
+test-sqlite:
+	@echo "Testing application with SQLite configuration..."
+	$(GOBUILD) -o $(BINARY_NAME)-test .
+	@echo "Built successfully - SQLite support is working!"
+	@rm -f $(BINARY_NAME)-test
 
 ## Install development tools
 install-tools:

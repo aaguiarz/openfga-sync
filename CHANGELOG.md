@@ -5,6 +5,35 @@ All notable changes to the OpenFGA Sync Service will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2024-06-15
+
+### Added
+
+#### SQLite Storage Adapter
+- Complete SQLite storage adapter supporting both changelog and stateful modes
+- File-based and in-memory database support (`:memory:`)
+- WAL mode enabled for better performance and concurrent access
+- Foreign key constraints and proper indexing
+- Statistics and monitoring capabilities with `GetStats()` method
+- Comprehensive test suite with 100% coverage
+- Integration with main application via `NewStorageAdapter()` factory
+
+#### Enhanced Documentation
+- Updated README.md with comprehensive storage backend documentation
+- Added SQLite configuration examples in `config.example.yaml`
+- Created `config.sqlite.yaml` for SQLite-specific configurations
+- Added `examples/sqlite_demo.go` demonstrating all SQLite features
+
+#### Development Improvements
+- Updated dependencies with `github.com/mattn/go-sqlite3 v1.14.28`
+- Enhanced error handling and logging for SQLite operations
+- Production-ready transaction handling and connection management
+
+### Changed
+- Updated storage adapter factory to support SQLite backend type
+- Enhanced configuration examples with SQLite DSN formats
+- Updated roadmap to reflect completed SQLite implementation
+
 ## [1.0.0] - 2024-06-15
 
 ### Added

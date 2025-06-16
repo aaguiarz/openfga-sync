@@ -6,7 +6,7 @@ A comprehensive Go service that consumes OpenFGA `/changes` API and synchronizes
 
 ### Core Functionality
 - **OpenFGA Integration**: Consumes changes API with advanced pagination and continuation token support
-- **Multi-Storage Support**: PostgreSQL with planned MySQL and SQLite support
+- **Multi-Storage Support**: PostgreSQL and SQLite with planned MySQL support
 - **Dual Storage Modes**: 
   - **Changelog mode**: Append-only audit trail of all changes
   - **Stateful mode**: Current state representation for efficient queries
@@ -70,6 +70,39 @@ type ChangeEvent struct {
     RawJSON    string    `json:"raw_json"`     // Original OpenFGA response
 }
 ```
+
+### Storage Backends
+
+#### PostgreSQL
+- **Production Ready**: Fully tested with transaction support
+- **Features**: JSONB storage, advanced indexing, concurrent connections
+- **DSN Format**: `postgres://user:password@host:port/database?sslmode=disable`
+- **Best For**: Production deployments, high-volume scenarios
+
+```yaml
+backend:
+  type: "postgres"
+  dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
+  mode: "changelog"  # or "stateful"
+```
+
+#### SQLite
+- **Lightweight**: Single-file database, no server required
+- **Features**: WAL mode, in-memory support, ACID transactions
+- **DSN Format**: File path or `:memory:` for in-memory database
+- **Best For**: Development, testing, single-instance deployments
+
+```yaml
+backend:
+  type: "sqlite"
+  dsn: "/var/lib/openfga-sync/data.db"  # or ":memory:"
+  mode: "stateful"  # or "changelog"
+```
+
+#### MySQL (Coming Soon)
+- **Enterprise**: Planned support for MySQL 5.7+ and MariaDB
+- **Features**: Replication support, clustering capabilities
+- **DSN Format**: `user:password@tcp(host:port)/database?parseTime=true`
 
 ## Configuration
 
@@ -262,7 +295,7 @@ The service automatically creates and manages database schemas based on the stor
 
 #### Prerequisites
 - Go 1.21+ 
-- PostgreSQL 12+ (MySQL and SQLite support planned)
+- Storage backend: PostgreSQL 12+ or SQLite 3.x
 - OpenFGA server instance
 
 #### Local Development
@@ -417,7 +450,6 @@ logging:
 
 - **Additional Storage Backends**
   - MySQL support
-  - SQLite support  
   - MongoDB support
   - OpenFGA write-back mode
 

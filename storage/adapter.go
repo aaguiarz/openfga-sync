@@ -44,11 +44,15 @@ func NewStorageAdapter(cfg *config.Config, logger interface{}) (StorageAdapter, 
 			return NewPostgresAdapter(cfg.Backend.DSN, cfg.Backend.Mode, l)
 		}
 		return nil, fmt.Errorf("invalid logger type for postgres adapter")
+	case "sqlite":
+		// Convert logger to the expected type
+		if l, ok := logger.(*logrus.Logger); ok {
+			return NewSQLiteAdapter(cfg.Backend.DSN, cfg.Backend.Mode, l)
+		}
+		return nil, fmt.Errorf("invalid logger type for sqlite adapter")
 	// TODO: Add other adapters as needed
 	// case "mysql":
 	//     return NewMySQLAdapter(cfg.Backend.DSN, cfg.Backend.Mode, logger)
-	// case "sqlite":
-	//     return NewSQLiteAdapter(cfg.Backend.DSN, cfg.Backend.Mode, logger)
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", cfg.Backend.Type)
 	}

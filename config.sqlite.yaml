@@ -1,0 +1,38 @@
+server:
+  port: 8080
+
+openfga:
+  endpoint: "http://localhost:8080"
+  store_id: "01HVMM0T3RQDNG2KQYX4RTKJ95"
+  token: ""
+
+backend:
+  type: "sqlite"
+  dsn: "/tmp/openfga-sync-test.db"
+  mode: "changelog"
+
+logging:
+  level: "info"
+  format: "text"
+
+observability:
+  opentelemetry:
+    enabled: false
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+service:
+  poll_interval: "30s"
+  batch_size: 50
+  max_retries: 3
+  retry_delay: "2s"
+  max_changes: 100
+  request_timeout: "10s"
+  max_retry_delay: "10s"
+  backoff_factor: 1.5
+  rate_limit_delay: "100ms"
+  enable_validation: true
+
+leadership:
+  enabled: false
