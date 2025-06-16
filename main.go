@@ -62,13 +62,6 @@ func main() {
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to initialize OpenTelemetry")
 	}
-	defer func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer shutdownCancel()
-		if shutdownErr := telemetryProvider.Shutdown(shutdownCtx); shutdownErr != nil {
-			logger.WithError(shutdownErr).Error("Failed to shutdown OpenTelemetry")
-		}
-	}()
 
 	if cfg.Observability.OpenTelemetry.Enabled {
 		logger.WithField("otel_endpoint", cfg.Observability.OpenTelemetry.Endpoint).Info("OpenTelemetry initialized")
@@ -85,7 +78,6 @@ func main() {
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to initialize storage adapter")
 	}
-	defer storageAdapter.Close()
 
 	// Initialize OpenFGA fetcher with enhanced options
 	fetchOptions := fetcher.FetchOptions{
@@ -112,7 +104,6 @@ func main() {
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to initialize OpenFGA fetcher")
 	}
-	defer fgaFetcher.Close()
 
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -122,22 +113,37 @@ func main() {
 	if err := httpServer.Start(ctx); err != nil {
 		logger.WithError(err).Fatal("Failed to start HTTP server")
 	}
-	defer func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer shutdownCancel()
-		if err := httpServer.Stop(shutdownCtx); err != nil {
-			logger.WithError(err).Error("Failed to stop HTTP server gracefully")
-		}
-	}()
 
-	// Setup signal handling for graceful shutdown
+	// Setup enhanced signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Enhanced shutdown handler
 	go func() {
-		<-sigChan
-		logger.Info("Received shutdown signal, gracefully stopping...")
+		sig := <-sigChan
+		logger.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
+		
+		// Start shutdown process
 		cancel()
+		
+		// Set a hard timeout for complete shutdown
+		shutdownTimer := time.NewTimer(30 * time.Second)
+		defer shutdownTimer.Stop()
+		
+		// Wait for second signal to force immediate shutdown
+		go func() {
+			select {
+			case sig2 := <-sigChan:
+				logger.WithField("signal", sig2.String()).Warn("Received second shutdown signal, forcing immediate exit")
+				os.Exit(1)
+			case <-shutdownTimer.C:
+				logger.Error("Shutdown timeout exceeded, forcing exit")
+				os.Exit(1)
+			case <-ctx.Done():
+				// Normal shutdown completed
+				return
+			}
+		}()
 	}()
 
 	// Mark service as ready after initialization
@@ -167,11 +173,52 @@ func main() {
 
 	// Start the sync process
 	logger.Info("OpenFGA sync service started successfully")
-	if err := runSyncLoop(ctx, fgaFetcher, storageAdapter, cfg, logger, metricsCollector); err != nil {
-		logger.WithError(err).Error("Sync loop failed")
+	
+	// Run the sync loop until shutdown
+	syncErr := runSyncLoop(ctx, fgaFetcher, storageAdapter, cfg, logger, metricsCollector)
+	
+	// Begin graceful shutdown
+	logger.Info("Beginning graceful shutdown...")
+	
+	// Mark service as not ready
+	httpServer.SetReady(false)
+	logger.Debug("Service marked as not ready")
+	
+	// Stop HTTP server first
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := httpServer.Stop(shutdownCtx); err != nil {
+		logger.WithError(err).Error("Failed to stop HTTP server gracefully")
+	} else {
+		logger.Debug("HTTP server stopped gracefully")
 	}
-
-	logger.Info("OpenFGA sync service stopped")
+	shutdownCancel()
+	
+	// Close storage adapter
+	if err := storageAdapter.Close(); err != nil {
+		logger.WithError(err).Error("Failed to close storage adapter gracefully")
+	} else {
+		logger.Debug("Storage adapter closed gracefully")
+	}
+	
+	// Close OpenFGA fetcher
+	fgaFetcher.Close()
+	logger.Debug("OpenFGA fetcher closed gracefully")
+	
+	// Shutdown OpenTelemetry
+	telemetryShutdownCtx, telemetryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := telemetryProvider.Shutdown(telemetryShutdownCtx); err != nil {
+		logger.WithError(err).Error("Failed to shutdown OpenTelemetry gracefully")
+	} else {
+		logger.Debug("OpenTelemetry shutdown gracefully")
+	}
+	telemetryCancel()
+	
+	// Log final sync error if any
+	if syncErr != nil {
+		logger.WithError(syncErr).Error("Sync loop terminated with error")
+	}
+	
+	logger.Info("OpenFGA sync service stopped gracefully")
 }
 
 // runSyncLoop runs the main synchronization loop
