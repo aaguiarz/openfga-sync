@@ -113,7 +113,7 @@ func DefaultConfig() *Config {
 		},
 		OpenFGA: OpenFGAConfig{
 			Endpoint: "http://localhost:8080",
-			Token:    "development-token", // Default token for development
+			Token:    "",
 		},
 		Backend: BackendConfig{
 			Type: "postgres",

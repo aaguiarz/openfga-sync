@@ -238,7 +238,7 @@ func (p *PostgresAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Ch
 	var insertCount, deleteCount int
 	for _, change := range changes {
 		switch strings.ToUpper(change.Operation) {
-		case "TUPLE_TO_USERSET_WRITE", "WRITE":
+		case "TUPLE_OPERATION_WRITE":
 			// Handle condition - convert from JSON string to PostgreSQL JSONB
 			var conditionJSONB interface{}
 			if change.Condition != "" {
@@ -257,7 +257,7 @@ func (p *PostgresAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Ch
 				return fmt.Errorf("failed to insert/update tuple: %w", err)
 			}
 			insertCount++
-		case "TUPLE_TO_USERSET_DELETE", "DELETE":
+		case "TUPLE_OPERATION_DELETE":
 			_, err = deleteStmt.ExecContext(ctx,
 				change.ObjectType,
 				change.ObjectID,

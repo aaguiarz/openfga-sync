@@ -322,9 +322,9 @@ func (o *OpenFGAAdapter) processBatch(ctx context.Context, changes []fetcher.Cha
 		tupleKey := o.convertToTupleKey(change)
 
 		switch strings.ToUpper(change.Operation) {
-		case "TUPLE_TO_USERSET_WRITE", "WRITE":
+		case "TUPLE_OPERATION_WRITE":
 			writes = append(writes, tupleKey)
-		case "TUPLE_TO_USERSET_DELETE", "DELETE":
+		case "TUPLE_OPERATION_DELETE":
 			// Convert to delete format (without condition)
 			deleteKey := client.ClientTupleKeyWithoutCondition{
 				User:     tupleKey.User,

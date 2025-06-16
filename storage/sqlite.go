@@ -270,7 +270,7 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 	var insertCount, deleteCount int
 	for _, change := range changes {
 		switch strings.ToUpper(change.Operation) {
-		case "TUPLE_TO_USERSET_WRITE", "WRITE":
+		case "TUPLE_OPERATION_WRITE":
 			// Handle condition - store as JSON string in TEXT field
 			var conditionText interface{}
 			if change.Condition != "" {
@@ -296,7 +296,7 @@ func (s *SQLiteAdapter) ApplyChanges(ctx context.Context, changes []fetcher.Chan
 				return fmt.Errorf("failed to insert/update tuple: %w", err)
 			}
 			insertCount++
-		case "TUPLE_TO_USERSET_DELETE", "DELETE":
+		case "TUPLE_OPERATION_DELETE":
 			_, err = deleteStmt.ExecContext(ctx,
 				change.ObjectType,
 				change.ObjectID,
