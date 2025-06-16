@@ -34,6 +34,11 @@ backend:
 #   dsn: ":memory:"
 #   mode: "changelog"
 #
+# OpenFGA (replication to another OpenFGA instance):
+#   type: "openfga"
+#   dsn: "http://target-openfga:8080/target-store-id"
+#   mode: "stateful"
+#
 # MySQL (coming soon):
 #   type: "mysql"
 #   dsn: "user:password@tcp(localhost:3306)/openfga_sync?parseTime=true"
@@ -86,6 +91,11 @@ leadership:
 # For SQLite:
 # BACKEND_TYPE=sqlite  
 # BACKEND_DSN=/var/lib/openfga-sync/data.db
+# BACKEND_MODE=stateful
+#
+# For OpenFGA replication:
+# BACKEND_TYPE=openfga
+# BACKEND_DSN=http://target-openfga:8080/target-store-id
 # BACKEND_MODE=stateful
 # LOG_LEVEL=info
 # LOG_FORMAT=json

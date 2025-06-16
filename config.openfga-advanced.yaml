@@ -1,0 +1,99 @@
+# Advanced OpenFGA Replication Configuration
+# This example demonstrates using JSON DSN format for complex configurations
+# and different replication scenarios
+
+server:
+  port: 8080
+
+# Source OpenFGA instance (what we're syncing FROM)
+openfga:
+  endpoint: "http://source-openfga:8080"
+  store_id: "01HSOURCE-STORE-ID"
+  token: "source-api-token-here"
+
+# Target OpenFGA instance (what we're syncing TO)
+# Using JSON DSN format for advanced configuration
+backend:
+  type: "openfga"
+  # JSON DSN format allows fine-grained control over connection parameters
+  dsn: |
+    {
+      "endpoint": "https://target-openfga.example.com",
+      "store_id": "01HTARGET-STORE-ID",
+      "token": "target-api-token-here",
+      "authorization_model_id": "01HMODEL-ID-TARGET",
+      "request_timeout": "45s",
+      "max_retries": 5,
+      "retry_delay": "2s",
+      "batch_size": 250
+    }
+  mode: "stateful"  # Maintain current state on target
+
+logging:
+  level: "info"
+  format: "json"
+
+observability:
+  opentelemetry:
+    enabled: true
+    endpoint: "http://otel-collector:4317"
+    service_name: "openfga-replication"
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+service:
+  poll_interval: "5s"          # Poll source frequently for low latency
+  batch_size: 200              # Override backend batch_size if needed
+  max_retries: 3               # Service-level retries (separate from backend)
+  retry_delay: "1s"
+  max_changes: 5000            # Limit changes per poll to avoid overwhelming target
+  request_timeout: "60s"
+  max_retry_delay: "10s"
+  backoff_factor: 2.0
+  rate_limit_delay: "10ms"     # Small delay between requests to target
+  enable_validation: true
+
+leadership:
+  enabled: true                # Enable for HA deployments
+  namespace: "openfga-system"
+  lock_name: "openfga-replication-leader"
+
+---
+# Alternative configurations for different scenarios:
+
+# Scenario 1: Development/Testing sync with simple DSN
+# backend:
+#   type: "openfga"
+#   dsn: "http://dev-openfga:8080/01HDEV-STORE-ID"
+#   mode: "changelog"
+
+# Scenario 2: Multi-region backup with high throughput
+# backend:
+#   type: "openfga"
+#   dsn: |
+#     {
+#       "endpoint": "https://backup-region.openfga.example.com",
+#       "store_id": "01HBACKUP-STORE-ID",
+#       "token": "backup-token",
+#       "request_timeout": "30s",
+#       "max_retries": 10,
+#       "retry_delay": "5s",
+#       "batch_size": 500
+#     }
+#   mode: "stateful"
+
+# Scenario 3: Cross-cloud migration
+# backend:
+#   type: "openfga"
+#   dsn: |
+#     {
+#       "endpoint": "https://migration-target.cloud.example.com",
+#       "store_id": "01HMIGRATE-STORE-ID",
+#       "token": "migration-token",
+#       "authorization_model_id": "01HNEW-MODEL-ID",
+#       "request_timeout": "120s",
+#       "max_retries": 3,
+#       "batch_size": 100
+#     }
+#   mode: "changelog"

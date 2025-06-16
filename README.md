@@ -104,6 +104,34 @@ backend:
 - **Features**: Replication support, clustering capabilities
 - **DSN Format**: `user:password@tcp(host:port)/database?parseTime=true`
 
+#### OpenFGA Replication
+- **Use Case**: Replicate changes to another OpenFGA instance
+- **Features**: Backup, disaster recovery, multi-region sync
+- **DSN Formats**: 
+  - Simple: `http://target-endpoint/target-store-id`
+  - JSON (advanced): `{"endpoint":"...","store_id":"...","token":"...","batch_size":200}`
+- **Best For**: Backup scenarios, development/staging sync, migration
+
+```yaml
+backend:
+  type: "openfga"
+  # Simple format
+  dsn: "http://backup-openfga:8080/01BACKUP-STORE-ID"
+  mode: "stateful"  # or "changelog"
+
+  # OR JSON format for advanced configuration
+  dsn: |
+    {
+      "endpoint": "https://target-openfga.example.com",
+      "store_id": "01HTARGET-STORE-ID",
+      "token": "target-api-token",
+      "authorization_model_id": "01HMODEL-ID",
+      "request_timeout": "45s",
+      "max_retries": 5,
+      "batch_size": 250
+    }
+```
+
 ## Configuration
 
 The service supports comprehensive configuration through YAML files with environment variable overrides. See [`config.example.yaml`](config.example.yaml) for a complete example.
@@ -338,6 +366,112 @@ go test ./config -v
 # Test fetcher functionality
 go test ./fetcher -v
 ```
+
+### OpenFGA Replication
+
+The OpenFGA storage adapter enables replication from one OpenFGA instance to another, supporting various scenarios such as backup, disaster recovery, and multi-region deployments.
+
+#### Configuration Formats
+
+**Simple DSN Format:**
+```yaml
+backend:
+  type: "openfga"
+  dsn: "http://target-openfga:8080/target-store-id"
+  mode: "stateful"
+```
+
+**JSON DSN Format (Advanced):**
+```yaml
+backend:
+  type: "openfga"
+  dsn: |
+    {
+      "endpoint": "https://target-openfga.example.com",
+      "store_id": "01HTARGET-STORE-ID",
+      "token": "target-api-token",
+      "authorization_model_id": "01HMODEL-ID",
+      "request_timeout": "45s",
+      "max_retries": 5,
+      "retry_delay": "2s",
+      "batch_size": 250
+    }
+  mode: "stateful"
+```
+
+#### JSON DSN Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `endpoint` | string | Required | Target OpenFGA API endpoint |
+| `store_id` | string | Required | Target store ID |
+| `token` | string | Optional | API token for authentication |
+| `authorization_model_id` | string | Optional | Specific model ID to use |
+| `request_timeout` | string | "30s" | Timeout for API requests |
+| `max_retries` | int | 3 | Maximum retry attempts |
+| `retry_delay` | string | "1s" | Delay between retries |
+| `batch_size` | int | 100 | Number of changes per batch |
+
+#### Use Cases
+
+**1. Backup and Disaster Recovery**
+```yaml
+# Primary → Backup replication
+backend:
+  type: "openfga"
+  dsn: "https://backup-region.openfga.example.com/01BACKUP-STORE-ID"
+  mode: "stateful"  # Maintain current state for quick failover
+```
+
+**2. Development/Staging Sync**
+```yaml
+# Production → Development replication
+backend:
+  type: "openfga"
+  dsn: "http://dev-openfga:8080/01DEV-STORE-ID"
+  mode: "changelog"  # Keep full audit trail for testing
+```
+
+**3. Cross-Cloud Migration**
+```yaml
+# Migration with custom settings
+backend:
+  type: "openfga"
+  dsn: |
+    {
+      "endpoint": "https://new-cloud.openfga.example.com",
+      "store_id": "01HNEW-STORE-ID",
+      "token": "migration-token",
+      "request_timeout": "120s",
+      "batch_size": 50
+    }
+  mode: "changelog"
+```
+
+**4. Multi-Region Active Replication**
+```yaml
+# High-performance replication
+backend:
+  type: "openfga"
+  dsn: |
+    {
+      "endpoint": "https://us-west.openfga.example.com",
+      "store_id": "01HUS-WEST-STORE-ID",
+      "batch_size": 500,
+      "max_retries": 10
+    }
+  mode: "stateful"
+```
+
+#### Features
+
+- **Dual Mode Support**: Both changelog and stateful modes
+- **Retry Logic**: Exponential backoff with configurable parameters
+- **Batch Processing**: Configurable batch sizes for optimal performance
+- **Authentication**: API token support for secure connections
+- **Health Monitoring**: Connection status and statistics
+- **Tuple Conversion**: Smart reconstruction of OpenFGA tuple keys
+- **Error Handling**: Graceful handling of network and API errors
 
 ## Database Schema
 

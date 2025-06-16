@@ -50,6 +50,12 @@ func NewStorageAdapter(cfg *config.Config, logger interface{}) (StorageAdapter, 
 			return NewSQLiteAdapter(cfg.Backend.DSN, cfg.Backend.Mode, l)
 		}
 		return nil, fmt.Errorf("invalid logger type for sqlite adapter")
+	case "openfga":
+		// Convert logger to the expected type
+		if l, ok := logger.(*logrus.Logger); ok {
+			return NewOpenFGAAdapter(cfg.Backend.DSN, cfg.Backend.Mode, l)
+		}
+		return nil, fmt.Errorf("invalid logger type for openfga adapter")
 	// TODO: Add other adapters as needed
 	// case "mysql":
 	//     return NewMySQLAdapter(cfg.Backend.DSN, cfg.Backend.Mode, logger)
