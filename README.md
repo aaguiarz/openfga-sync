@@ -397,6 +397,105 @@ export OPENFGA_OIDC_SCOPES="read:tuples,write:tuples"
 
 > 📖 **Detailed Setup Guide**: See [OIDC_AUTHENTICATION.md](OIDC_AUTHENTICATION.md) for complete Auth0 FGA setup instructions.
 
+#### 🔄 OpenFGA-to-OpenFGA Replication with OIDC
+
+For replicating data between OpenFGA instances using OIDC authentication on both source and target:
+
+**Cross-Organization Replication** (different Auth0 tenants):
+```yaml
+# Source OpenFGA (US region)
+openfga:
+  endpoint: "https://api.us1.fga.dev"
+  store_id: "01HPROD-US-STORE-ID"
+  oidc:
+    issuer: "https://us-company.auth0.com/"
+    audience: "https://api.us1.fga.dev/"
+    client_id: "us-reader-client-id"
+    client_secret: "us-reader-secret"
+    scopes: ["read:tuples", "read:stores", "read:changes"]
+
+# Target OpenFGA (EU region)
+backend:
+  type: "openfga"
+  dsn: '{
+    "endpoint": "https://api.eu1.fga.dev",
+    "store_id": "01HPROD-EU-STORE-ID",
+    "oidc": {
+      "issuer": "https://eu-company.auth0.com/",
+      "audience": "https://api.eu1.fga.dev/",
+      "client_id": "eu-writer-client-id",
+      "client_secret": "eu-writer-secret",
+      "scopes": ["write:tuples", "read:tuples", "read:stores"],
+      "token_issuer": "https://eu-company.auth0.com/"
+    }
+  }'
+  mode: "changelog"
+```
+
+**Same-Organization Replication** (shared Auth0 tenant):
+```yaml
+# Source store (Production)
+openfga:
+  endpoint: "https://api.us1.fga.dev"
+  store_id: "01HPROD-STORE-ID"
+  oidc:
+    issuer: "https://company.auth0.com/"
+    audience: "https://api.us1.fga.dev/"
+    client_id: "shared-m2m-client-id"
+    client_secret: "shared-m2m-secret"
+    scopes: ["read:tuples", "read:stores", "read:changes", "write:tuples"]
+
+# Target store (Staging)
+backend:
+  type: "openfga"
+  dsn: '{
+    "endpoint": "https://api.us1.fga.dev",
+    "store_id": "01HSTAGING-STORE-ID",
+    "inherit_auth": true
+  }'
+  mode: "changelog"
+```
+
+**Configuration Examples:**
+- [`config.openfga-to-openfga-oidc.yaml`](config.openfga-to-openfga-oidc.yaml) - Cross-organization replication
+- [`config.openfga-same-org-oidc.yaml`](config.openfga-same-org-oidc.yaml) - Same-organization replication
+- [`docker-compose.full-observability.yaml`](docker-compose.full-observability.yaml) - Docker deployment with monitoring
+- [`kubernetes-openfga-oidc-production.yaml`](kubernetes-openfga-oidc-production.yaml) - Production Kubernetes deployment
+
+For replicating data between OpenFGA instances using OIDC authentication on both ends:
+
+**Complete Replication Examples:**
+- [`config.openfga-oidc-replication.yaml`](config.openfga-oidc-replication.yaml) - Cross-organization replication
+- [`config.openfga-oidc-same-org.yaml`](config.openfga-oidc-same-org.yaml) - Same-organization replication
+- [`docker-compose.openfga-oidc.yaml`](docker-compose.openfga-oidc.yaml) - Docker deployment
+- [`kubernetes-openfga-oidc.yaml`](kubernetes-openfga-oidc.yaml) - Production Kubernetes deployment
+
+**Quick Example:**
+```yaml
+# Source OpenFGA (reading changes)
+openfga:
+  endpoint: "https://source-api.us1.fga.dev"
+  store_id: "01HSOURCE-STORE-ID"
+  oidc:
+    issuer: "https://source-company.auth0.com/"
+    client_id: "source-reader-client-id"
+    client_secret: "source-reader-secret"
+
+# Target OpenFGA (writing changes)  
+backend:
+  type: "openfga"
+  dsn: |
+    {
+      "endpoint": "https://target-api.us1.fga.dev",
+      "store_id": "01HTARGET-STORE-ID",
+      "oidc": {
+        "issuer": "https://target-company.auth0.com/",
+        "client_id": "target-writer-client-id",
+        "client_secret": "target-writer-secret"
+      }
+    }
+```
+
 ```bash
 
 ### Configuration Validation

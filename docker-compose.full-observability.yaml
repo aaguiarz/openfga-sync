@@ -1,0 +1,239 @@
+# Docker Compose for OpenFGA Sync with OIDC and Full Observability Stack
+# Comprehensive setup with monitoring, tracing, and log aggregation
+version: '3.8'
+
+services:
+  # OpenFGA Sync Service with OIDC Authentication
+  openfga-sync:
+    image: openfga-sync:latest
+    container_name: openfga-sync-oidc
+    restart: unless-stopped
+    ports:
+      - "8080:8080"    # Health/metrics endpoint
+    environment:
+      # Source OpenFGA OIDC Configuration
+      OPENFGA_ENDPOINT: "https://api.us1.fga.dev"
+      OPENFGA_STORE_ID: "${SOURCE_STORE_ID}"
+      OPENFGA_OIDC_ISSUER: "${SOURCE_AUTH0_DOMAIN}"
+      OPENFGA_OIDC_AUDIENCE: "https://api.us1.fga.dev/"
+      OPENFGA_OIDC_CLIENT_ID: "${SOURCE_CLIENT_ID}"
+      OPENFGA_OIDC_CLIENT_SECRET: "${SOURCE_CLIENT_SECRET}"
+      OPENFGA_OIDC_SCOPES: "read:tuples read:stores read:changes"
+      
+      # Backend Configuration (Target OpenFGA)
+      BACKEND_TYPE: "openfga"
+      BACKEND_DSN: |
+        {
+          "endpoint": "https://api.eu1.fga.dev",
+          "store_id": "${TARGET_STORE_ID}",
+          "oidc": {
+            "issuer": "${TARGET_AUTH0_DOMAIN}",
+            "audience": "https://api.eu1.fga.dev/",
+            "client_id": "${TARGET_CLIENT_ID}",
+            "client_secret": "${TARGET_CLIENT_SECRET}",
+            "scopes": ["write:tuples", "read:tuples", "read:stores"],
+            "token_issuer": "${TARGET_AUTH0_DOMAIN}"
+          }
+        }
+      BACKEND_MODE: "changelog"
+      
+      # Service Configuration
+      SERVICE_POLL_INTERVAL: "10s"
+      SERVICE_BATCH_SIZE: "100"
+      SERVICE_MAX_RETRIES: "3"
+      SERVICE_ENABLE_VALIDATION: "true"
+      
+      # Logging
+      LOGGING_LEVEL: "info"
+      LOGGING_FORMAT: "json"
+      
+      # Observability
+      OBSERVABILITY_OPENTELEMETRY_ENABLED: "true"
+      OBSERVABILITY_OPENTELEMETRY_ENDPOINT: "http://otel-collector:4317"
+      OBSERVABILITY_OPENTELEMETRY_SERVICE_NAME: "openfga-sync-oidc"
+      OBSERVABILITY_METRICS_ENABLED: "true"
+      OBSERVABILITY_METRICS_PATH: "/metrics"
+      
+      # Server
+      SERVER_PORT: "8080"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - observability
+    depends_on:
+      - otel-collector
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus metrics
+    networks:
+      - observability
+    depends_on:
+      - jaeger
+      - prometheus
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - observability
+    restart: unless-stopped
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # HTTP collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - observability
+    restart: unless-stopped
+
+  # Loki for log aggregation
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml
+      - loki_data:/tmp/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - observability
+    restart: unless-stopped
+
+  # Promtail for log collection
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - ./logs:/var/log/openfga-sync:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - loki
+
+  # AlertManager for alerts
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    networks:
+      - observability
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+
+networks:
+  observability:
+    driver: bridge
+
+# Configuration Files Required:
+# 
+# .env file:
+# SOURCE_STORE_ID=01HXXX-SOURCE-STORE-ID
+# SOURCE_AUTH0_DOMAIN=https://source-domain.auth0.com/
+# SOURCE_CLIENT_ID=source-client-id
+# SOURCE_CLIENT_SECRET=source-client-secret
+# TARGET_STORE_ID=01HXXX-TARGET-STORE-ID
+# TARGET_AUTH0_DOMAIN=https://target-domain.auth0.com/
+# TARGET_CLIENT_ID=target-client-id
+# TARGET_CLIENT_SECRET=target-client-secret
+# 
+# prometheus.yml:
+# global:
+#   scrape_interval: 15s
+# scrape_configs:
+#   - job_name: 'openfga-sync'
+#     static_configs:
+#       - targets: ['openfga-sync:8080']
+#   - job_name: 'otel-collector'
+#     static_configs:
+#       - targets: ['otel-collector:8889']
+# 
+# grafana/datasources.yml:
+# apiVersion: 1
+# datasources:
+#   - name: Prometheus
+#     type: prometheus
+#     url: http://prometheus:9090
+#   - name: Jaeger
+#     type: jaeger
+#     url: http://jaeger:16686
+#   - name: Loki
+#     type: loki
+#     url: http://loki:3100
+# 
+# Usage:
+# 1. Create .env file with your OIDC credentials
+# 2. Create configuration files (prometheus.yml, etc.)
+# 3. Run: docker-compose -f docker-compose.full-observability.yaml up -d
+# 4. Access:
+#    - OpenFGA Sync: http://localhost:8080/health
+#    - Prometheus: http://localhost:9090
+#    - Grafana: http://localhost:3000 (admin/admin)
+#    - Jaeger: http://localhost:16686
+#    - AlertManager: http://localhost:9093

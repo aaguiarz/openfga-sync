@@ -1,0 +1,111 @@
+# OpenFGA Sync Service - Same Organization OIDC Replication
+# This configuration shows OpenFGA-to-OpenFGA replication within the same Auth0 organization
+# using OIDC authentication for both source and target instances.
+
+# Server configuration
+server:
+  port: 8080
+
+# Source OpenFGA instance (production) - where changes are read from
+openfga:
+  endpoint: "https://api.us1.fga.dev"                      # Auth0 FGA production endpoint
+  store_id: "01HPROD-STORE-ID-EXAMPLE"                     # Production store ID
+  
+  # OIDC authentication for reading from production
+  oidc:
+    issuer: "https://my-company.auth0.com/"                # Company Auth0 domain
+    audience: "https://api.us1.fga.dev/"                   # Auth0 FGA API audience
+    client_id: "prod-reader-client-id"                     # Production reader M2M app
+    client_secret: "prod-reader-client-secret"             # Production reader secret
+    scopes: ["read:tuples", "read:stores"]                 # Read-only access to production
+    token_issuer: "https://my-company.auth0.com/"          # Same as issuer
+
+# Target OpenFGA instance (staging/backup) - where changes are written to
+backend:
+  type: "openfga"                                          # OpenFGA storage backend
+  mode: "stateful"                                         # Maintain current state
+  
+  # Simple JSON DSN with OIDC for same organization
+  dsn: |
+    {
+      "endpoint": "https://api.us1.fga.dev",
+      "store_id": "01HSTAGING-STORE-ID-EXAMPLE",
+      "oidc": {
+        "issuer": "https://my-company.auth0.com/",
+        "audience": "https://api.us1.fga.dev/",
+        "client_id": "staging-writer-client-id",
+        "client_secret": "staging-writer-client-secret",
+        "scopes": ["read:tuples", "write:tuples"],
+        "token_issuer": "https://my-company.auth0.com/"
+      },
+      "batch_size": 100,
+      "request_timeout": "30s"
+    }
+
+# Service configuration for reliable replication
+service:
+  poll_interval: "10s"                                     # Poll every 10 seconds
+  batch_size: 100                                          # Standard batch size
+  max_retries: 3                                           # Standard retry count
+  retry_delay: "1s"                                        # Quick retry for same org
+  request_timeout: "30s"                                   # Standard timeout
+  enable_validation: true                                  # Always validate
+
+# Standard logging
+logging:
+  level: "info"
+  format: "json"
+
+# Basic observability
+observability:
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+# Use Cases for this Configuration:
+# 
+# 1. Production to Staging Sync:
+#    - Sync production authorization data to staging environment
+#    - Test authorization changes against real data
+#    - Validate new authorization models
+#
+# 2. Backup and Disaster Recovery:
+#    - Continuous backup of authorization data
+#    - Quick failover capability
+#    - Data consistency across regions
+#
+# 3. Development Environment Sync:
+#    - Keep development data fresh with production subset
+#    - Test new features with realistic data
+#    - Debug authorization issues
+#
+# 4. Analytics and Reporting:
+#    - Replicate data to analytics-specific store
+#    - Generate reports without impacting production
+#    - Long-term data retention for compliance
+
+# Auth0 FGA Setup Instructions:
+#
+# 1. Create Machine-to-Machine Applications:
+#    a) Production Reader App:
+#       - Name: "OpenFGA Sync - Production Reader"
+#       - Authorize for FGA API
+#       - Grant scopes: read:tuples, read:stores
+#       - Note the client_id and client_secret
+#
+#    b) Staging Writer App:
+#       - Name: "OpenFGA Sync - Staging Writer"  
+#       - Authorize for FGA API
+#       - Grant scopes: read:tuples, write:tuples, read:stores
+#       - Note the client_id and client_secret
+#
+# 2. Update Configuration:
+#    - Replace "my-company" with your Auth0 domain
+#    - Replace store IDs with your actual store IDs
+#    - Replace client IDs and secrets with real values
+#
+# 3. Security Best Practices:
+#    - Use environment variables for secrets in production
+#    - Rotate client secrets regularly
+#    - Monitor authentication logs
+#    - Use least-privilege scopes

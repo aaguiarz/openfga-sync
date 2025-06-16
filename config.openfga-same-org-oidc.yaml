@@ -1,0 +1,95 @@
+# OpenFGA Sync Service - Same Organization OIDC Replication
+# This configuration demonstrates synchronizing between two stores within
+# the same Auth0 FGA organization using OIDC authentication
+
+# Server configuration
+server:
+  port: 8080
+
+# SOURCE store configuration (same organization, same OIDC setup)
+openfga:
+  endpoint: "https://api.us1.fga.dev"                       # Auth0 FGA endpoint
+  store_id: "01HXXX-PRODUCTION-STORE-ID"                   # Production store
+  
+  # OIDC authentication configuration
+  oidc:
+    issuer: "https://your-auth0-domain.auth0.com/"          # Your Auth0 domain
+    audience: "https://api.us1.fga.dev/"                    # Auth0 FGA API audience
+    client_id: "your-machine-to-machine-client-id"         # M2M application client ID
+    client_secret: "your-machine-to-machine-secret"        # M2M application client secret
+    scopes: ["read:tuples", "read:stores", "read:changes", "write:tuples"] # Read and write permissions
+    token_issuer: "https://your-auth0-domain.auth0.com/"   # Token issuer URL
+
+# TARGET store configuration (same organization, same OIDC, different store)
+backend:
+  type: "openfga"
+  # Simplified DSN - same OIDC config as source, different store
+  dsn: '{
+    "endpoint": "https://api.us1.fga.dev",
+    "store_id": "01HXXX-STAGING-STORE-ID",
+    "inherit_auth": true
+  }'
+  mode: "changelog"
+
+# Service configuration optimized for same-organization sync
+service:
+  poll_interval: "5s"                         # Faster polling for same org
+  batch_size: 200                             # Larger batches for better performance
+  max_retries: 3
+  retry_delay: "1s"
+  max_retry_delay: "30s"
+  backoff_factor: 2.0
+  request_timeout: "30s"
+  rate_limit_delay: "25ms"                    # Reduced rate limiting
+  enable_validation: true
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+
+# Observability
+observability:
+  opentelemetry:
+    enabled: true
+    endpoint: "http://localhost:4318"
+    service_name: "openfga-sync-same-org"
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+# Configuration Notes:
+#
+# 1. SAME ORGANIZATION BENEFITS:
+#    - Single Auth0 tenant and OIDC configuration
+#    - Shared M2M application with both read/write scopes
+#    - No cross-region network latency
+#    - Simplified credential management
+#
+# 2. USE CASES:
+#    - Production → Staging synchronization
+#    - Multi-environment data consistency
+#    - Backup/disaster recovery setup
+#    - Development environment seeding
+#
+# 3. INHERIT_AUTH FEATURE:
+#    - Target inherits OIDC config from source
+#    - Reduces configuration duplication
+#    - Only store_id needs to be different
+#
+# 4. PERFORMANCE OPTIMIZATIONS:
+#    - Faster polling (5s vs 10s)
+#    - Larger batch sizes (200 vs 100)
+#    - Reduced rate limiting
+#    - Same-region network performance
+#
+# 5. ENVIRONMENT VARIABLES:
+#    export OPENFGA_ENDPOINT="https://api.us1.fga.dev"
+#    export OPENFGA_STORE_ID="01HXXX-PRODUCTION-STORE-ID"
+#    export OPENFGA_OIDC_ISSUER="https://your-auth0-domain.auth0.com/"
+#    export OPENFGA_OIDC_AUDIENCE="https://api.us1.fga.dev/"
+#    export OPENFGA_OIDC_CLIENT_ID="your-machine-to-machine-client-id"
+#    export OPENFGA_OIDC_CLIENT_SECRET="your-machine-to-machine-secret"
+#    export OPENFGA_OIDC_SCOPES="read:tuples read:stores read:changes write:tuples"
+#    export BACKEND_TYPE="openfga"
+#    export BACKEND_DSN='{"endpoint":"https://api.us1.fga.dev","store_id":"01HXXX-STAGING-STORE-ID","inherit_auth":true}'

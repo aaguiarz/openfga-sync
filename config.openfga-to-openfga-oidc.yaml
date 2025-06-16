@@ -1,0 +1,110 @@
+# OpenFGA Sync Service - OpenFGA to OpenFGA with OIDC Configuration
+# This configuration demonstrates synchronizing between two OpenFGA instances,
+# both using OIDC authentication (Auth0 FGA setup)
+
+# Server configuration for health/metrics endpoints
+server:
+  port: 8080
+
+# SOURCE OpenFGA instance configuration with OIDC authentication
+# This is where we read the changelog from
+openfga:
+  endpoint: "https://api.us1.fga.dev"                       # Source Auth0 FGA endpoint
+  store_id: "01HXXX-SOURCE-STORE-ID"                       # Source Auth0 FGA store ID
+  
+  # OIDC authentication configuration for SOURCE Auth0 FGA instance
+  oidc:
+    issuer: "https://source-auth0-domain.auth0.com/"        # Source Auth0 domain
+    audience: "https://api.us1.fga.dev/"                    # Auth0 FGA API audience
+    client_id: "source-machine-to-machine-client-id"       # Source M2M application client ID
+    client_secret: "source-machine-to-machine-secret"      # Source M2M application client secret
+    scopes: ["read:tuples", "read:stores", "read:changes"] # Required scopes for reading changes
+    token_issuer: "https://source-auth0-domain.auth0.com/" # Source token issuer URL
+
+# TARGET backend storage configuration - Another OpenFGA instance with OIDC
+backend:
+  type: "openfga"                                          # Storage type: openfga for sync to another FGA instance
+  # DSN format for OpenFGA with OIDC authentication (JSON format)
+  dsn: '{
+    "endpoint": "https://api.eu1.fga.dev",
+    "store_id": "01HXXX-TARGET-STORE-ID",
+    "oidc": {
+      "issuer": "https://target-auth0-domain.auth0.com/",
+      "audience": "https://api.eu1.fga.dev/",
+      "client_id": "target-machine-to-machine-client-id",
+      "client_secret": "target-machine-to-machine-secret",
+      "scopes": ["write:tuples", "read:tuples", "read:stores"],
+      "token_issuer": "https://target-auth0-domain.auth0.com/"
+    }
+  }'
+  mode: "changelog"                                        # Storage mode: changelog for OpenFGA-to-OpenFGA sync
+
+# Service configuration
+service:
+  poll_interval: "10s"                        # How often to poll for changes
+  batch_size: 100                             # Number of changes to process per batch
+  max_retries: 3                              # Maximum retry attempts
+  retry_delay: "1s"                           # Initial retry delay
+  max_retry_delay: "30s"                      # Maximum retry delay
+  backoff_factor: 2.0                         # Exponential backoff factor
+  request_timeout: "30s"                      # Request timeout
+  rate_limit_delay: "50ms"                    # Rate limiting delay between requests
+  enable_validation: true                     # Enable tuple validation
+
+# Logging configuration
+logging:
+  level: "info"                               # Log level: debug, info, warn, error, fatal, panic
+  format: "json"                              # Log format: text or json
+
+# Observability configuration
+observability:
+  opentelemetry:
+    enabled: true                             # Enable OpenTelemetry tracing
+    endpoint: "http://localhost:4318"         # OTEL collector endpoint
+    service_name: "openfga-sync-oidc"         # Service name for tracing
+  metrics:
+    enabled: true                             # Enable Prometheus metrics
+    path: "/metrics"                          # Metrics endpoint path
+
+# Leadership election (for high availability)
+leadership:
+  enabled: false                              # Enable leader election for HA deployments
+  namespace: "default"                        # Kubernetes namespace
+  lock_name: "openfga-sync-leader"           # Leader election lock name
+
+# Configuration Notes:
+# 
+# 1. SOURCE CONFIGURATION (openfga section):
+#    - Reads changelog from source OpenFGA instance
+#    - Uses OIDC authentication with read permissions
+#    - Requires scopes: read:tuples, read:stores, read:changes
+#
+# 2. TARGET CONFIGURATION (backend section):
+#    - Writes changes to target OpenFGA instance
+#    - Uses OIDC authentication with write permissions
+#    - Requires scopes: write:tuples, read:tuples, read:stores
+#    - JSON DSN format allows full OIDC configuration
+#
+# 3. CROSS-REGION REPLICATION:
+#    - Source: US region (api.us1.fga.dev)
+#    - Target: EU region (api.eu1.fga.dev)
+#    - Different Auth0 domains for each organization
+#
+# 4. SECURITY CONSIDERATIONS:
+#    - Different client credentials for source vs target
+#    - Minimum required scopes for each service
+#    - Separate Auth0 tenants for isolation
+#
+# 5. ENVIRONMENT VARIABLES (alternative to file config):
+#    # Source OpenFGA OIDC
+#    export OPENFGA_ENDPOINT="https://api.us1.fga.dev"
+#    export OPENFGA_STORE_ID="01HXXX-SOURCE-STORE-ID"
+#    export OPENFGA_OIDC_ISSUER="https://source-auth0-domain.auth0.com/"
+#    export OPENFGA_OIDC_AUDIENCE="https://api.us1.fga.dev/"
+#    export OPENFGA_OIDC_CLIENT_ID="source-machine-to-machine-client-id"
+#    export OPENFGA_OIDC_CLIENT_SECRET="source-machine-to-machine-secret"
+#    export OPENFGA_OIDC_SCOPES="read:tuples read:stores read:changes"
+#    
+#    # Backend configuration
+#    export BACKEND_TYPE="openfga"
+#    export BACKEND_DSN='{"endpoint":"https://api.eu1.fga.dev",...}'

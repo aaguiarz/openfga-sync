@@ -1,0 +1,104 @@
+# OpenFGA Sync Service - OpenFGA to OpenFGA Replication with OIDC
+# This configuration demonstrates complete OpenFGA-to-OpenFGA replication using OIDC authentication
+# for both the source (changelog reading) and target (change synchronization) instances.
+
+# Server configuration for health/metrics endpoints
+server:
+  port: 8080
+
+# Source OpenFGA instance configuration (where changes are read from)
+# This uses OIDC authentication to read the changelog
+openfga:
+  endpoint: "https://source-api.us1.fga.dev"               # Source Auth0 FGA endpoint
+  store_id: "01HSOURCE-STORE-ID-EXAMPLE"                   # Source store ID
+  
+  # OIDC authentication for reading from source OpenFGA instance
+  oidc:
+    issuer: "https://source-company.auth0.com/"            # Source Auth0 domain
+    audience: "https://api.us1.fga.dev/"                   # Auth0 FGA API audience
+    client_id: "source-m2m-client-id"                      # Source M2M app client ID
+    client_secret: "source-m2m-client-secret"              # Source M2M app client secret
+    scopes: ["read:tuples", "read:stores"]                 # Read-only scopes for source
+    token_issuer: "https://source-company.auth0.com/"      # Source token issuer
+
+# Target OpenFGA instance configuration (where changes are written to)
+# This uses the OpenFGA storage backend with OIDC authentication
+backend:
+  type: "openfga"                                          # Use OpenFGA as storage backend
+  mode: "stateful"                                         # Maintain current state in target
+  
+  # JSON DSN format with OIDC configuration for target OpenFGA instance
+  dsn: |
+    {
+      "endpoint": "https://target-api.us1.fga.dev",
+      "store_id": "01HTARGET-STORE-ID-EXAMPLE",
+      "oidc": {
+        "issuer": "https://target-company.auth0.com/",
+        "audience": "https://api.us1.fga.dev/",
+        "client_id": "target-m2m-client-id",
+        "client_secret": "target-m2m-client-secret",
+        "scopes": ["read:tuples", "write:tuples", "read:stores"],
+        "token_issuer": "https://target-company.auth0.com/"
+      },
+      "request_timeout": "45s",
+      "max_retries": 5,
+      "retry_delay": "2s",
+      "batch_size": 50
+    }
+
+# Service configuration optimized for OpenFGA replication
+service:
+  poll_interval: "5s"                                      # Poll source every 5 seconds
+  batch_size: 50                                           # Process 50 changes per batch
+  max_retries: 5                                           # Higher retry count for reliability
+  retry_delay: "2s"                                        # Initial retry delay
+  max_retry_delay: "60s"                                   # Maximum retry delay for network issues
+  backoff_factor: 2.0                                      # Exponential backoff
+  request_timeout: "45s"                                   # Longer timeout for OIDC token acquisition
+  rate_limit_delay: "100ms"                                # Rate limiting between requests
+  enable_validation: true                                  # Validate all tuple operations
+
+# Logging configuration for production monitoring
+logging:
+  level: "info"                                            # Info level for production
+  format: "json"                                           # Structured JSON logs
+
+# Observability configuration for monitoring replication
+observability:
+  opentelemetry:
+    enabled: true                                          # Enable distributed tracing
+    endpoint: "http://otel-collector:4317"                 # OTEL collector endpoint
+    service_name: "openfga-sync-replication"               # Service name for tracing
+  metrics:
+    enabled: true                                          # Enable Prometheus metrics
+    path: "/metrics"                                       # Metrics endpoint
+
+# High availability configuration for production deployments
+leadership:
+  enabled: true                                            # Enable leader election
+  namespace: "openfga-system"                              # Kubernetes namespace
+  lock_name: "openfga-sync-replication-leader"            # Leader lock name
+
+# Environment Variables Alternative:
+# You can also configure this using environment variables instead of YAML:
+#
+# Source OpenFGA (reading changelog):
+# export OPENFGA_ENDPOINT="https://source-api.us1.fga.dev"
+# export OPENFGA_STORE_ID="01HSOURCE-STORE-ID-EXAMPLE"
+# export OPENFGA_OIDC_ISSUER="https://source-company.auth0.com/"
+# export OPENFGA_OIDC_AUDIENCE="https://api.us1.fga.dev/"
+# export OPENFGA_OIDC_CLIENT_ID="source-m2m-client-id"
+# export OPENFGA_OIDC_CLIENT_SECRET="source-m2m-client-secret"
+# export OPENFGA_OIDC_SCOPES="read:tuples,read:stores"
+# export OPENFGA_OIDC_TOKEN_ISSUER="https://source-company.auth0.com/"
+#
+# Target OpenFGA (writing changes):
+# export BACKEND_TYPE="openfga"
+# export BACKEND_MODE="stateful"
+# export BACKEND_DSN='{"endpoint":"https://target-api.us1.fga.dev","store_id":"01HTARGET-STORE-ID-EXAMPLE","oidc":{"issuer":"https://target-company.auth0.com/","audience":"https://api.us1.fga.dev/","client_id":"target-m2m-client-id","client_secret":"target-m2m-client-secret","scopes":["read:tuples","write:tuples","read:stores"],"token_issuer":"https://target-company.auth0.com/"}}'
+#
+# Service Configuration:
+# export POLL_INTERVAL="5s"
+# export BATCH_SIZE="50"
+# export LOG_LEVEL="info"
+# export LOG_FORMAT="json"

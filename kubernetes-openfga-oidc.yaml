@@ -1,0 +1,335 @@
+# Kubernetes Deployment - OpenFGA OIDC Replication
+# This demonstrates production-ready Kubernetes deployment of OpenFGA-to-OpenFGA 
+# replication with OIDC authentication and high availability.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openfga-system
+  labels:
+    name: openfga-system
+
+---
+# Secret for OIDC credentials (create manually or use external secret management)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openfga-oidc-credentials
+  namespace: openfga-system
+type: Opaque
+data:
+  # Base64 encoded values - replace with your actual credentials
+  source-client-secret: cHJvZC1yZWFkZXItY2xpZW50LXNlY3JldA==  # prod-reader-client-secret
+  target-client-secret: c3RhZ2luZy13cml0ZXItY2xpZW50LXNlY3JldA==  # staging-writer-client-secret
+
+---
+# ConfigMap for OpenFGA OIDC configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-oidc-config
+  namespace: openfga-system
+data:
+  config.yaml: |
+    server:
+      port: 8080
+    
+    openfga:
+      endpoint: "https://api.us1.fga.dev"
+      store_id: "01HPROD-STORE-ID-EXAMPLE"
+      oidc:
+        issuer: "https://my-company.auth0.com/"
+        audience: "https://api.us1.fga.dev/"
+        client_id: "prod-reader-client-id"
+        scopes: ["read:tuples", "read:stores"]
+        token_issuer: "https://my-company.auth0.com/"
+    
+    backend:
+      type: "openfga"
+      mode: "stateful"
+      dsn: |
+        {
+          "endpoint": "https://api.us1.fga.dev",
+          "store_id": "01HSTAGING-STORE-ID-EXAMPLE",
+          "oidc": {
+            "issuer": "https://my-company.auth0.com/",
+            "audience": "https://api.us1.fga.dev/",
+            "client_id": "staging-writer-client-id",
+            "scopes": ["read:tuples", "write:tuples"],
+            "token_issuer": "https://my-company.auth0.com/"
+          },
+          "batch_size": 100,
+          "request_timeout": "30s"
+        }
+    
+    service:
+      poll_interval: "10s"
+      batch_size: 100
+      max_retries: 3
+      enable_validation: true
+    
+    logging:
+      level: "info"
+      format: "json"
+    
+    observability:
+      opentelemetry:
+        enabled: true
+        endpoint: "http://otel-collector.observability:4317"
+        service_name: "openfga-sync-replication"
+      metrics:
+        enabled: true
+        path: "/metrics"
+    
+    leadership:
+      enabled: true
+      namespace: "openfga-system"
+      lock_name: "openfga-sync-replication-leader"
+
+---
+# Service for health checks and metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: openfga-sync-service
+  namespace: openfga-system
+  labels:
+    app: openfga-sync-replication
+spec:
+  selector:
+    app: openfga-sync-replication
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+# Deployment with high availability and OIDC authentication
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfga-sync-replication
+  namespace: openfga-system
+  labels:
+    app: openfga-sync-replication
+spec:
+  replicas: 2  # High availability with leader election
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: openfga-sync-replication
+  template:
+    metadata:
+      labels:
+        app: openfga-sync-replication
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: openfga-sync-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: openfga-sync
+        image: openfga-sync:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        
+        # Environment variables for OIDC secrets
+        env:
+        - name: OPENFGA_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: openfga-oidc-credentials
+              key: source-client-secret
+        
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+          readOnly: true
+        
+        # Resource limits and requests
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: openfga-oidc-config
+      
+      # Pod disruption budget for high availability
+      terminationGracePeriodSeconds: 30
+
+---
+# Service Account for RBAC and leader election
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openfga-sync-sa
+  namespace: openfga-system
+
+---
+# ClusterRole for leader election
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openfga-sync-leader-election
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+
+---
+# ClusterRoleBinding for leader election
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openfga-sync-leader-election
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openfga-sync-leader-election
+subjects:
+- kind: ServiceAccount
+  name: openfga-sync-sa
+  namespace: openfga-system
+
+---
+# Pod Disruption Budget for high availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: openfga-sync-pdb
+  namespace: openfga-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: openfga-sync-replication
+
+---
+# ServiceMonitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openfga-sync-metrics
+  namespace: openfga-system
+  labels:
+    app: openfga-sync-replication
+spec:
+  selector:
+    matchLabels:
+      app: openfga-sync-replication
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+# HorizontalPodAutoscaler (optional)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: openfga-sync-hpa
+  namespace: openfga-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: openfga-sync-replication
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+# Deployment Instructions:
+#
+# 1. Create and encode secrets:
+#    kubectl create secret generic openfga-oidc-credentials \
+#      --from-literal=source-client-secret="your-actual-source-secret" \
+#      --from-literal=target-client-secret="your-actual-target-secret" \
+#      -n openfga-system
+#
+# 2. Update ConfigMap:
+#    - Replace example store IDs with actual values
+#    - Replace example client IDs with actual values
+#    - Update Auth0 domain
+#
+# 3. Deploy:
+#    kubectl apply -f kubernetes-openfga-oidc.yaml
+#
+# 4. Verify deployment:
+#    kubectl get pods -n openfga-system
+#    kubectl logs -f deployment/openfga-sync-replication -n openfga-system
+#
+# 5. Check leader election:
+#    kubectl get leases -n openfga-system
+#
+# 6. Monitor metrics:
+#    kubectl port-forward svc/openfga-sync-service 8080:8080 -n openfga-system
+#    curl http://localhost:8080/metrics

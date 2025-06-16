@@ -1,0 +1,166 @@
+# Docker Compose - OpenFGA OIDC Replication Example
+# This demonstrates how to deploy OpenFGA-to-OpenFGA replication with OIDC authentication
+
+version: '3.8'
+
+services:
+  # OpenFGA Sync Service with OIDC Replication
+  openfga-sync-replication:
+    image: openfga-sync:latest
+    container_name: openfga-sync-oidc-replication
+    restart: unless-stopped
+    
+    # Environment variables for OIDC configuration
+    environment:
+      # Source OpenFGA (reading changelog) - Production
+      - OPENFGA_ENDPOINT=https://api.us1.fga.dev
+      - OPENFGA_STORE_ID=01HPROD-STORE-ID-EXAMPLE
+      - OPENFGA_OIDC_ISSUER=https://my-company.auth0.com/
+      - OPENFGA_OIDC_AUDIENCE=https://api.us1.fga.dev/
+      - OPENFGA_OIDC_CLIENT_ID=prod-reader-client-id
+      - OPENFGA_OIDC_CLIENT_SECRET=prod-reader-client-secret
+      - OPENFGA_OIDC_SCOPES=read:tuples,read:stores
+      - OPENFGA_OIDC_TOKEN_ISSUER=https://my-company.auth0.com/
+      
+      # Target OpenFGA (writing changes) - Staging
+      - BACKEND_TYPE=openfga
+      - BACKEND_MODE=stateful
+      - |
+        BACKEND_DSN={
+          "endpoint": "https://api.us1.fga.dev",
+          "store_id": "01HSTAGING-STORE-ID-EXAMPLE", 
+          "oidc": {
+            "issuer": "https://my-company.auth0.com/",
+            "audience": "https://api.us1.fga.dev/",
+            "client_id": "staging-writer-client-id",
+            "client_secret": "staging-writer-client-secret",
+            "scopes": ["read:tuples", "write:tuples"],
+            "token_issuer": "https://my-company.auth0.com/"
+          },
+          "batch_size": 100,
+          "request_timeout": "30s"
+        }
+      
+      # Service Configuration
+      - POLL_INTERVAL=10s
+      - BATCH_SIZE=100
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - METRICS_ENABLED=true
+      - OTEL_ENABLED=true
+      - OTEL_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=openfga-sync-replication
+      
+      # High Availability
+      - LEADERSHIP_ENABLED=true
+      - LEADERSHIP_NAMESPACE=openfga-system
+      - LEADERSHIP_LOCK_NAME=openfga-sync-replication-leader
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Networking
+    ports:
+      - "8080:8080"  # Health/metrics endpoint
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # OpenTelemetry Collector (optional - for observability)
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus metrics
+    depends_on:
+      - jaeger
+
+  # Jaeger (optional - for tracing)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # Jaeger gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  # Prometheus (optional - for metrics)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+  # Grafana (optional - for dashboards)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+
+volumes:
+  grafana-storage:
+
+# Instructions for Use:
+#
+# 1. Update Environment Variables:
+#    - Replace all example values with your actual Auth0 and OpenFGA credentials
+#    - Set real store IDs, client IDs, and client secrets
+#    - Update your Auth0 domain
+#
+# 2. Deploy the Stack:
+#    docker-compose up -d
+#
+# 3. Monitor the Service:
+#    - Health: http://localhost:8080/health
+#    - Metrics: http://localhost:8080/metrics
+#    - Jaeger UI: http://localhost:16686
+#    - Prometheus: http://localhost:9090
+#    - Grafana: http://localhost:3000 (admin/admin)
+#
+# 4. Verify Replication:
+#    - Check logs: docker-compose logs -f openfga-sync-replication
+#    - Monitor metrics for successful sync operations
+#    - Verify data appears in target OpenFGA store
+#
+# 5. Production Deployment:
+#    - Use secrets management for sensitive values
+#    - Configure proper resource limits
+#    - Set up monitoring and alerting
+#    - Use external observability stack
