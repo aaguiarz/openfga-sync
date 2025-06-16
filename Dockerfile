@@ -1,8 +1,8 @@
 # Multi-stage build for minimal production image
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
-# Install git and ca-certificates for downloading dependencies
-RUN apk add --no-cache git ca-certificates
+# Install git, ca-certificates, and sqlite for dependencies
+RUN apk add --no-cache git ca-certificates sqlite-dev gcc musl-dev
 
 # Set working directory
 WORKDIR /app
@@ -16,37 +16,50 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application with optimizations
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags='-w -s -extldflags "-static"' \
-    -a -installsuffix cgo \
+# Build the application with CGO enabled for SQLite support
+RUN CGO_ENABLED=1 go build \
+    -ldflags='-w -s' \
+    -a \
     -o openfga-sync \
     .
 
-# Production stage
-FROM scratch
+# Production stage - use alpine instead of scratch for SQLite support
+FROM alpine:latest
 
-# Copy CA certificates for HTTPS requests
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Install ca-certificates and sqlite runtime
+RUN apk --no-cache add ca-certificates sqlite
+
+# Create app directory
+WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/openfga-sync /openfga-sync
+COPY --from=builder /app/openfga-sync /app/openfga-sync
 
 # Copy example configuration
-COPY --from=builder /app/config.example.yaml /config.example.yaml
+COPY --from=builder /app/config.example.yaml /app/config.example.yaml
 
-# Create non-root user
+# Create a minimal config for health checks
+RUN echo 'server:\n  port: 8080\nopenfga:\n  endpoint: "http://localhost"\n  store_id: "health-check"\nbackend:\n  type: "sqlite"\n  dsn: ":memory:"\n  mode: "stateful"\nlogging:\n  level: "error"' > /app/health-config.yaml
+
+# Create non-root user and group
+RUN addgroup -g 1000 appgroup && adduser -D -u 1000 -G appgroup appuser
+
+# Change ownership of app directory
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
 USER 1000:1000
 
-# Expose health check port
+# Expose health check and metrics port
 EXPOSE 8080
 
-# Health check
+# Health check using HTTP endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/openfga-sync", "-config", "/dev/null", "--health-check"] || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1
 
 # Default command
-ENTRYPOINT ["/openfga-sync"]
+ENTRYPOINT ["/app/openfga-sync"]
+CMD ["-config", "/app/config.example.yaml"]
 
 # Metadata
 LABEL maintainer="OpenFGA Sync Service" \
