@@ -1,83 +1,130 @@
 # OpenFGA Sync Service
 
-A comprehensive Go service that consumes OpenFGA `/changes` API and synchronizes authorization data to databases for auditing, analytics, replication, and compliance purposes.
+[![Go Version](https://img.shields.io/badge/Go-1.23+-blue.svg)](https://golang.org)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](Dockerfile)
 
-## Features
+A production-ready Go service that synchronizes OpenFGA authorization data to various storage backends for auditing, analytics, replication, and compliance purposes.
 
-### Core Functionality
-- **OpenFGA Integration**: Consumes changes API with advanced pagination and continuation token support
-- **Multi-Storage Support**: PostgreSQL and SQLite with planned MySQL support
-- **Dual Storage Modes**: 
-  - **Changelog mode**: Append-only audit trail of all changes
-  - **Stateful mode**: Current state representation for efficient queries
-- **Configuration Management**: YAML files with environment variable overrides
-- **Production Ready**: Graceful shutdown, automatic schema initialization, comprehensive error handling
+## 🚀 Quick Start
 
-### Enhanced Fetcher Capabilities
-- **Intelligent Parsing**: Automatic user/object type extraction (e.g., "employee:alice" → type="employee", id="alice")
-- **Retry Logic**: Exponential backoff with configurable parameters
-- **Rate Limiting**: Built-in request throttling to respect API limits
-- **Statistics Tracking**: Real-time metrics on requests, latency, and success rates
-- **Raw JSON Preservation**: Complete audit trail with original OpenFGA responses
-- **Change Validation**: Comprehensive validation of change events
-- **Paging Support**: Advanced pagination with configurable page sizes and limits
+```bash
+# Clone and build
+git clone https://github.com/aaguiarz/openfga-sync.git
+cd openfga-sync
+go build -o openfga-sync
+
+# Run with environment variables
+OPENFGA_ENDPOINT="https://api.fga.example.com" \
+OPENFGA_STORE_ID="01HXXX-STORE-ID" \
+BACKEND_DSN="postgres://user:pass@localhost/db" \
+./openfga-sync
+```
+
+## 📋 Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Storage Backends](#storage-backends)
+- [Usage Examples](#usage-examples)
+- [Monitoring & Observability](#monitoring--observability)
+- [Deployment](#deployment)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+
+## ✨ Features
+
+### Core Capabilities
+- **🔄 Real-time Sync**: Consumes OpenFGA `/changes` API with intelligent pagination
+- **📊 Multi-Storage**: PostgreSQL, SQLite, and OpenFGA replication support
+- **🎯 Dual Modes**: Changelog (audit trail) and Stateful (current state) storage
+- **🔧 Configuration**: YAML files with comprehensive environment variable overrides
+- **🛡️ Production Ready**: Graceful shutdown, health checks, comprehensive error handling
+
+### Advanced Fetcher
+- **🧠 Smart Parsing**: Automatic user/object type extraction (`employee:alice` → `type=employee, id=alice`)
+- **🔄 Retry Logic**: Exponential backoff with configurable parameters
+- **⚡ Rate Limiting**: Built-in throttling to respect API limits
+- **📈 Statistics**: Real-time metrics on requests, latency, and success rates
+- **📝 Audit Trail**: Complete preservation of original OpenFGA responses
+- **✅ Validation**: Comprehensive change event validation
 
 ### Observability & Operations
-- **Structured Logging**: JSON/text formats with configurable levels
-- **Health Endpoints**: Ready for Kubernetes health checks
-- **Metrics**: Prometheus-compatible metrics endpoint
-- **OpenTelemetry**: Distributed tracing and metrics export with OTLP support
-- **Leader Election**: Kubernetes-native HA support (planned)
+- **📊 Metrics**: Prometheus-compatible metrics with 20+ indicators
+- **🔍 Tracing**: OpenTelemetry distributed tracing with OTLP export
+- **📋 Logging**: Structured JSON/text logging with configurable levels
+- **💚 Health Checks**: Kubernetes-ready health and readiness endpoints
+- **⚖️ Load Balancing**: Leader election support for HA deployments
 
-## Architecture
+## 🏗️ Architecture
 
-The service follows a clean architecture pattern with clear separation of concerns:
+The service follows a clean, modular architecture with clear separation of concerns:
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   OpenFGA API   │───▷│  Fetcher Module  │───▷│ Storage Adapter │
+│   /changes      │    │  - Parsing       │    │  - PostgreSQL   │
+│   /stores       │    │  - Retry Logic   │    │  - SQLite       │
+└─────────────────┘    │  - Rate Limiting │    │  - OpenFGA      │
+                       └──────────────────┘    └─────────────────┘
+                                │
+                       ┌──────────────────┐
+                       │  Observability   │
+                       │  - Metrics       │
+                       │  - Tracing       │
+                       │  - Health        │
+                       └──────────────────┘
+```
 
 ### Core Components
-- **`main.go`**: Service orchestration, signal handling, and startup logic
-- **`config/`**: Configuration management with YAML/environment variable support
-- **`fetcher/`**: Enhanced OpenFGA client with retry logic, parsing, and statistics
-- **`storage/`**: Database adapters with dual storage modes
+
+| Component | Purpose | Features |
+|-----------|---------|----------|
+| **`main.go`** | Service orchestration | Signal handling, graceful shutdown, startup coordination |
+| **`config/`** | Configuration management | YAML parsing, environment variables, validation |
+| **`fetcher/`** | OpenFGA client | Retry logic, parsing, statistics, rate limiting |
+| **`storage/`** | Database adapters | Multi-backend support, schema management, transactions |
+| **`telemetry/`** | Observability | OpenTelemetry tracing, metrics collection |
+| **`server/`** | HTTP endpoints | Health checks, metrics exposure, admin interface |
 
 ### Storage Modes
 
-#### Changelog Mode (`changelog`)
-- **Table**: `fga_changelog` 
+#### 📝 Changelog Mode
+- **Table**: `fga_changelog`
 - **Purpose**: Complete audit trail of all authorization changes
-- **Schema**: Stores every change event with timestamps, change types, and raw JSON
-- **Use Cases**: Compliance, audit trails, change analysis, debugging
+- **Use Cases**: Compliance, forensics, change analysis, debugging
+- **Schema**: Stores every change event with timestamps and raw JSON
 
-#### Stateful Mode (`stateful`)
+#### 🎯 Stateful Mode  
 - **Table**: `fga_tuples`
 - **Purpose**: Current state representation for efficient queries
-- **Schema**: Maintains only the current authorization relationships
-- **Use Cases**: Authorization queries, data replication, performance optimization
+- **Use Cases**: Authorization queries, replication, performance optimization
+- **Schema**: Maintains only current authorization relationships
 
 ### Change Event Structure
 
-Each change event contains both structured and raw data:
-
 ```go
 type ChangeEvent struct {
-    // Structured fields (parsed from OpenFGA)
+    // Parsed structured data
     ObjectType string    `json:"object_type"`  // e.g., "document"
     ObjectID   string    `json:"object_id"`    // e.g., "readme.md"
     Relation   string    `json:"relation"`     // e.g., "viewer"
-    UserType   string    `json:"user_type"`    // e.g., "employee"
+    UserType   string    `json:"user_type"`    // e.g., "employee" 
     UserID     string    `json:"user_id"`      // e.g., "alice"
     ChangeType string    `json:"change_type"`  // "tuple_write" or "tuple_delete"
-    Timestamp  time.Time `json:"timestamp"`    // When the change occurred
+    Timestamp  time.Time `json:"timestamp"`    // Change occurrence time
+    
+    // Audit and compliance
     RawJSON    string    `json:"raw_json"`     // Original OpenFGA response
 }
 ```
 
-### Storage Backends
+## 🗄️ Storage Backends
 
-#### PostgreSQL
-- **Production Ready**: Fully tested with transaction support
-- **Features**: JSONB storage, advanced indexing, concurrent connections
-- **DSN Format**: `postgres://user:password@host:port/database?sslmode=disable`
-- **Best For**: Production deployments, high-volume scenarios
+### PostgreSQL
+**Production-grade relational database**
 
 ```yaml
 backend:
@@ -86,11 +133,19 @@ backend:
   mode: "changelog"  # or "stateful"
 ```
 
-#### SQLite
-- **Lightweight**: Single-file database, no server required
-- **Features**: WAL mode, in-memory support, ACID transactions
-- **DSN Format**: File path or `:memory:` for in-memory database
-- **Best For**: Development, testing, single-instance deployments
+**Features:**
+- ✅ JSONB storage for complex queries
+- ✅ Advanced indexing and performance optimization
+- ✅ Concurrent connections and transactions
+- ✅ Full ACID compliance
+- ✅ Comprehensive test coverage
+
+**Best for:** Production deployments, high-volume scenarios, enterprise environments
+
+---
+
+### SQLite
+**Lightweight embedded database**
 
 ```yaml
 backend:
@@ -99,42 +154,114 @@ backend:
   mode: "stateful"  # or "changelog"
 ```
 
-#### MySQL (Coming Soon)
-- **Enterprise**: Planned support for MySQL 5.7+ and MariaDB
-- **Features**: Replication support, clustering capabilities
-- **DSN Format**: `user:password@tcp(host:port)/database?parseTime=true`
+**Features:**
+- ✅ Single-file database, no server required
+- ✅ WAL mode for better concurrency
+- ✅ In-memory support for testing
+- ✅ ACID transactions
+- ✅ Cross-platform compatibility
 
-#### OpenFGA Replication
-- **Use Case**: Replicate changes to another OpenFGA instance
-- **Features**: Backup, disaster recovery, multi-region sync
-- **DSN Formats**: 
-  - Simple: `http://target-endpoint/target-store-id`
-  - JSON (advanced): `{"endpoint":"...","store_id":"...","token":"...","batch_size":200}`
-- **Best For**: Backup scenarios, development/staging sync, migration
+**Best for:** Development, testing, single-instance deployments, edge computing
 
+---
+
+### OpenFGA Replication
+**Replicate to another OpenFGA instance**
+
+**Simple Format:**
 ```yaml
 backend:
   type: "openfga"
-  # Simple format
   dsn: "http://backup-openfga:8080/01BACKUP-STORE-ID"
-  mode: "stateful"  # or "changelog"
+  mode: "stateful"
+```
 
-  # OR JSON format for advanced configuration
+**Advanced JSON Format:**
+```yaml
+backend:
+  type: "openfga"
   dsn: |
     {
       "endpoint": "https://target-openfga.example.com",
-      "store_id": "01HTARGET-STORE-ID",
+      "store_id": "01HTARGET-STORE-ID", 
       "token": "target-api-token",
       "authorization_model_id": "01HMODEL-ID",
       "request_timeout": "45s",
       "max_retries": 5,
       "batch_size": 250
     }
+  mode: "changelog"
 ```
 
-## Configuration
+**Features:**
+- ✅ Backup and disaster recovery
+- ✅ Multi-region synchronization
+- ✅ Development/staging sync
+- ✅ Cross-cloud migration support
+- ✅ Configurable batch processing
 
-The service supports comprehensive configuration through YAML files with environment variable overrides. See [`config.example.yaml`](config.example.yaml) for a complete example.
+**Best for:** Backup scenarios, multi-environment sync, migration projects
+
+---
+
+### 🔮 Coming Soon
+
+#### MySQL/MariaDB
+- Enterprise-grade relational database
+- Replication and clustering support
+- DSN: `user:password@tcp(host:port)/database?parseTime=true`
+
+## 🚀 Installation
+
+### Prerequisites
+- **Go 1.23+** for building from source
+- **Storage Backend**: PostgreSQL 12+ or SQLite 3.x
+- **OpenFGA Server**: Access to OpenFGA API instance
+
+### Option 1: Download Binary
+```bash
+# Download latest release (replace with actual release URL)
+curl -L -o openfga-sync https://github.com/aaguiarz/openfga-sync/releases/latest/download/openfga-sync-linux-amd64
+chmod +x openfga-sync
+```
+
+### Option 2: Build from Source
+```bash
+# Clone repository
+git clone https://github.com/aaguiarz/openfga-sync.git
+cd openfga-sync
+
+# Install dependencies
+go mod tidy
+
+# Build binary
+go build -o openfga-sync
+
+# Optional: Install globally
+go install
+```
+
+### Option 3: Docker
+```bash
+# Pull from registry (when available)
+docker pull ghcr.io/aaguiarz/openfga-sync:latest
+
+# Or build locally
+docker build -t openfga-sync .
+```
+
+### Option 4: Docker Compose
+```bash
+# Quick start with PostgreSQL
+docker compose up -d
+
+# View logs
+docker compose logs -f openfga-sync
+```
+
+## ⚙️ Configuration
+
+The service supports comprehensive configuration through YAML files with environment variable overrides.
 
 ### Quick Start Configuration
 
@@ -143,11 +270,11 @@ Create a `config.yaml` file:
 ```yaml
 # OpenFGA connection
 openfga:
-  endpoint: "https://api.openfga.example.com"
+  endpoint: "https://api.fga.example.com"
   store_id: "01HXXX-YOUR-STORE-ID"
   token: "your-api-token"  # Optional
 
-# Database connection  
+# Database connection
 backend:
   type: "postgres"
   dsn: "postgres://user:password@localhost:5432/openfga_sync?sslmode=disable"
@@ -169,16 +296,25 @@ logging:
 
 ### Advanced Configuration
 
-For production deployments, additional options are available:
+See [`config.example.yaml`](config.example.yaml) for complete options:
 
 ```yaml
+# Server configuration
+server:
+  port: 8080
+
+# Advanced service settings
 service:
-  # Fetching behavior
-  max_changes: 0                    # Limit changes per poll (0 = no limit)
-  request_timeout: "30s"            # Timeout for OpenFGA requests
-  max_retry_delay: "5s"             # Maximum delay between retries
-  backoff_factor: 2.0               # Exponential backoff multiplier
-  rate_limit_delay: "50ms"          # Delay between requests
+  poll_interval: "5s"              # How often to poll for changes
+  batch_size: 100                  # Changes per batch
+  max_changes: 0                   # Limit total changes (0 = unlimited)
+  request_timeout: "30s"           # OpenFGA request timeout
+  max_retries: 3                   # Retry attempts on failure
+  retry_delay: "1s"                # Initial retry delay
+  max_retry_delay: "5s"            # Maximum retry delay
+  backoff_factor: 2.0              # Exponential backoff multiplier
+  rate_limit_delay: "50ms"         # Inter-request delay
+  enable_validation: true          # Validate change events
 
 # Observability
 observability:
@@ -197,35 +333,47 @@ leadership:
   lock_name: "openfga-sync-leader"
 ```
 
-### Environment Variable Support
+### Environment Variables
 
-All configuration options can be overridden with environment variables:
+All configuration options support environment variable overrides:
 
 ```bash
-export OPENFGA_ENDPOINT="https://api.openfga.example.com"
+# Core settings
+export OPENFGA_ENDPOINT="https://api.fga.example.com"
 export OPENFGA_STORE_ID="01HXXX-YOUR-STORE-ID"
+export OPENFGA_TOKEN="your-api-token"
+
+# Backend configuration
+export BACKEND_TYPE="postgres"
 export BACKEND_DSN="postgres://user:password@localhost:5432/openfga_sync"
 export BACKEND_MODE="changelog"
-export LOG_LEVEL="debug"
+
+# Service settings
+export POLL_INTERVAL="5s"
+export BATCH_SIZE="100"
+export LOG_LEVEL="info"
+
+# Observability
+export OTEL_ENDPOINT="http://otel-collector:4317"
+export OTEL_ENABLED="true"
+export METRICS_ENABLED="true"
 ```
 
-## Usage
+### Configuration Validation
 
-### Installation
+The service validates configuration on startup:
 
 ```bash
-# Clone the repository
-git clone https://github.com/aaguiarz/openfga-sync.git
-cd openfga-sync
+# Test configuration
+./openfga-sync -config config.yaml -validate
 
-# Install dependencies
-go mod tidy
-
-# Build the service
-go build -o openfga-sync
+# Test with environment variables
+BACKEND_DSN="invalid-dsn" ./openfga-sync -validate
 ```
 
-### Running the Service
+## 📚 Usage Examples
+
+### Basic Usage
 
 ```bash
 # Run with default config (config.yaml)
@@ -235,7 +383,7 @@ go build -o openfga-sync
 ./openfga-sync -config /path/to/config.yaml
 
 # Run with environment variables only
-OPENFGA_ENDPOINT="https://api.openfga.example.com" \
+OPENFGA_ENDPOINT="https://api.fga.example.com" \
 OPENFGA_STORE_ID="01HXXX-STORE-ID" \
 BACKEND_DSN="postgres://user:pass@localhost/db" \
 ./openfga-sync
@@ -251,52 +399,116 @@ docker build -t openfga-sync .
 docker run -v $(pwd)/config.yaml:/app/config.yaml openfga-sync
 
 # Run with environment variables
-docker run -e OPENFGA_ENDPOINT="https://api.openfga.example.com" \
+docker run -e OPENFGA_ENDPOINT="https://api.fga.example.com" \
            -e BACKEND_DSN="postgres://user:pass@db:5432/openfga_sync" \
            openfga-sync
 ```
 
-### Kubernetes Deployment
+### Configuration Examples
 
+#### SQLite for Development
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: openfga-sync
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: openfga-sync
-  template:
-    metadata:
-      labels:
-        app: openfga-sync
-    spec:
-      containers:
-      - name: openfga-sync
-        image: openfga-sync:latest
-        env:
-        - name: OPENFGA_ENDPOINT
-          value: "https://api.openfga.example.com"
-        - name: OPENFGA_STORE_ID
-          value: "01HXXX-STORE-ID"
-        - name: BACKEND_DSN
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: dsn
-        - name: LEADERSHIP_ENABLED
-          value: "true"
+openfga:
+  endpoint: "http://localhost:8080"
+  store_id: "01HDEV-STORE-ID"
+
+backend:
+  type: "sqlite"
+  dsn: "./dev-data.db"
+  mode: "stateful"
+
+service:
+  poll_interval: "2s"
+  batch_size: 50
+  
+logging:
+  level: "debug"
+  format: "text"
 ```
 
-### HTTP Endpoints & Monitoring
+#### PostgreSQL for Production
+```yaml
+openfga:
+  endpoint: "https://api.fga.example.com"
+  store_id: "01HPROD-STORE-ID"
+  token: "${OPENFGA_TOKEN}"
 
-The service exposes HTTP endpoints for health checks and metrics on the configured server port (default: 8080).
+backend:
+  type: "postgres"
+  dsn: "${DATABASE_URL}"
+  mode: "changelog"
 
-#### Health Check Endpoints
+service:
+  poll_interval: "5s"
+  batch_size: 500
+  max_retries: 5
+  rate_limit_delay: "10ms"
+  
+observability:
+  opentelemetry:
+    enabled: true
+    endpoint: "http://otel-collector:4317"
+  metrics:
+    enabled: true
 
-**Health Endpoint: `/healthz`**
+leadership:
+  enabled: true
+  namespace: "production"
+```
+
+#### OpenFGA Replication
+```yaml
+openfga:
+  endpoint: "https://source.fga.example.com"
+  store_id: "01HSOURCE-STORE-ID"
+  token: "${SOURCE_TOKEN}"
+
+backend:
+  type: "openfga"
+  dsn: |
+    {
+      "endpoint": "https://backup.fga.example.com",
+      "store_id": "01HBACKUP-STORE-ID",
+      "token": "${BACKUP_TOKEN}",
+      "batch_size": 100
+    }
+  mode: "stateful"
+```
+
+## Monitoring & Observability
+
+The service provides extensive monitoring and observability features:
+
+### Metrics
+
+Prometheus-compatible metrics are exposed at `/metrics`:
+
+- **Change Processing Metrics:**
+  - `openfga_sync_changes_processed_total`: Total changes processed successfully
+  - `openfga_sync_changes_errors_total`: Total change processing errors  
+  - `openfga_sync_changes_lag_seconds`: Lag between latest change timestamp and current time
+
+- **Sync Operation Metrics:**
+  - `openfga_sync_duration_seconds`: Histogram of sync operation durations
+  - `openfga_sync_last_timestamp`: Unix timestamp of last successful sync
+
+- **OpenFGA API Metrics:**
+  - `openfga_sync_openfga_requests_total{status="success|error"}`: API request counts by status
+  - `openfga_sync_openfga_request_duration_seconds{endpoint="changes"}`: API request duration histogram
+  - `openfga_sync_openfga_last_successful_fetch`: Unix timestamp of last successful fetch
+
+- **Storage Metrics:**
+  - `openfga_sync_storage_operations_total{operation,status}`: Storage operation counts
+  - `openfga_sync_storage_operation_duration_seconds{operation}`: Storage operation durations
+  - `openfga_sync_storage_connection_status`: Storage connection status (1=connected, 0=disconnected)
+
+- **Service Health Metrics:**
+  - `openfga_sync_service_uptime_seconds_total`: Total service uptime
+  - `openfga_sync_service_start_timestamp`: Service start timestamp
+
+### Health Endpoints
+
+#### `/healthz` - Health Check
 ```bash
 curl http://localhost:8080/healthz
 ```
@@ -316,7 +528,7 @@ Response:
 }
 ```
 
-**Readiness Endpoint: `/readyz`**
+#### `/readyz` - Readiness Check
 ```bash
 curl http://localhost:8080/readyz
 ```
@@ -332,54 +544,42 @@ Response:
 }
 ```
 
-#### Prometheus Metrics
-
-**Metrics Endpoint: `/metrics`**
+#### `/metrics` - Prometheus Metrics
 ```bash
 curl http://localhost:8080/metrics
 ```
 
-The service exposes comprehensive Prometheus metrics:
+### OpenTelemetry Integration
 
-**Change Processing Metrics:**
-- `openfga_sync_changes_processed_total` - Total changes processed successfully
-- `openfga_sync_changes_errors_total` - Total change processing errors  
-- `openfga_sync_changes_lag_seconds` - Lag between latest change timestamp and current time
+Enable distributed tracing and metrics export:
 
-**Sync Operation Metrics:**
-- `openfga_sync_duration_seconds` - Histogram of sync operation durations
-- `openfga_sync_last_timestamp` - Unix timestamp of last successful sync
-
-**OpenFGA API Metrics:**
-- `openfga_sync_openfga_requests_total{status="success|error"}` - API request counts by status
-- `openfga_sync_openfga_request_duration_seconds{endpoint="changes"}` - API request duration histogram
-- `openfga_sync_openfga_last_successful_fetch` - Unix timestamp of last successful fetch
-
-**Storage Metrics:**
-- `openfga_sync_storage_operations_total{operation,status}` - Storage operation counts
-- `openfga_sync_storage_operation_duration_seconds{operation}` - Storage operation durations
-- `openfga_sync_storage_connection_status` - Storage connection status (1=connected, 0=disconnected)
-
-**Service Health Metrics:**
-- `openfga_sync_service_uptime_seconds_total` - Total service uptime
-- `openfga_sync_service_start_timestamp` - Service start timestamp
-
-#### Configuration
-
-Enable metrics in your configuration:
 ```yaml
-server:
-  port: 8080  # HTTP server port
-
 observability:
-  metrics:
-    enabled: true     # Enable Prometheus metrics
-    path: "/metrics"  # Metrics endpoint path (default: /metrics)
+  opentelemetry:
+    endpoint: "http://otel-collector:4317"
+    service_name: "openfga-sync"
+    enabled: true
 ```
 
-#### Monitoring Integration
+**Features:**
+- 🔍 **Distributed Tracing**: Complete request traces across OpenFGA API and storage operations
+- 📊 **Metrics Export**: OTLP HTTP exporter for metrics to observability platforms
+- 🏷️ **Rich Attributes**: Detailed span attributes for debugging and analysis
+- 🔄 **Context Propagation**: Proper trace context handling across service boundaries
 
-**Prometheus Configuration:**
+**Supported Platforms:**
+- Jaeger
+- Zipkin  
+- New Relic
+- Datadog
+- Grafana Cloud
+- Any OTLP-compatible platform
+
+See [`OPENTELEMETRY.md`](OPENTELEMETRY.md) for detailed configuration and examples.
+
+### Monitoring Integration
+
+#### Prometheus Configuration
 ```yaml
 # prometheus.yml
 scrape_configs:
@@ -390,7 +590,7 @@ scrape_configs:
     scrape_interval: 15s
 ```
 
-**Kubernetes ServiceMonitor:**
+#### Kubernetes ServiceMonitor
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -405,45 +605,270 @@ spec:
     path: /metrics
 ```
 
-### Database Setup
+#### Grafana Dashboard
+Import the provided dashboard JSON or create custom dashboards using the available metrics.
 
-The service automatically creates and manages database schemas based on the storage mode:
+## 🚀 Deployment
 
-#### Changelog Mode Tables
-- **`fga_changelog`**: Complete audit trail of authorization changes
-  - `id`: Primary key (auto-increment)
-  - `object_type`, `object_id`: Parsed object information
-  - `relation`: The relationship type
-  - `user_type`, `user_id`: Parsed user information  
-  - `change_type`: Type of change (tuple_write, tuple_delete)
-  - `timestamp`: When the change occurred
-  - `raw_json`: Original OpenFGA response for compliance
-  - `created_at`: When the record was stored
+### Docker
 
-#### Stateful Mode Tables
-- **`fga_tuples`**: Current state representation
-  - `object_type`, `object_id`: Object identification
-  - `relation`: Relationship type
-  - `user_type`, `user_id`: User identification
-  - `created_at`, `updated_at`: Timestamps
-  - Primary key: Composite of object, relation, and user
+#### Single Container
+```bash
+# Build
+docker build -t openfga-sync .
 
-#### Common Tables
-- **`sync_state`**: Synchronization metadata
-  - `id`: Primary key
-  - `continuation_token`: Last processed token
-  - `last_sync_time`: Timestamp of last successful sync
+# Run with environment variables
+docker run -d \
+  --name openfga-sync \
+  -p 8080:8080 \
+  -e OPENFGA_ENDPOINT="https://api.fga.example.com" \
+  -e OPENFGA_STORE_ID="01HXXX-STORE-ID" \
+  -e BACKEND_DSN="postgres://user:pass@db:5432/openfga_sync" \
+  openfga-sync
+```
 
-### Development
+#### Docker Compose
+```yaml
+version: '3.8'
 
-#### Prerequisites
-- Go 1.21+ 
-- Storage backend: PostgreSQL 12+ or SQLite 3.x
-- OpenFGA server instance
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: openfga_sync
+      POSTGRES_USER: openfga_user
+      POSTGRES_PASSWORD: openfga_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
-#### Local Development
+  openfga-sync:
+    build: .
+    environment:
+      OPENFGA_ENDPOINT: "${OPENFGA_ENDPOINT}"
+      OPENFGA_STORE_ID: "${OPENFGA_STORE_ID}"
+      BACKEND_DSN: "postgres://openfga_user:openfga_password@postgres:5432/openfga_sync?sslmode=disable"
+      BACKEND_MODE: "changelog"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+```
+
+### Kubernetes
+
+#### Basic Deployment
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfga-sync
+  labels:
+    app: openfga-sync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openfga-sync
+  template:
+    metadata:
+      labels:
+        app: openfga-sync
+    spec:
+      containers:
+      - name: openfga-sync
+        image: openfga-sync:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: OPENFGA_ENDPOINT
+          value: "https://api.fga.example.com"
+        - name: OPENFGA_STORE_ID
+          value: "01HXXX-STORE-ID"
+        - name: BACKEND_DSN
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: dsn
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openfga-sync
+  labels:
+    app: openfga-sync
+spec:
+  selector:
+    app: openfga-sync
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+```
+
+#### High Availability Deployment
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfga-sync
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: openfga-sync
+  template:
+    metadata:
+      labels:
+        app: openfga-sync
+    spec:
+      containers:
+      - name: openfga-sync
+        image: openfga-sync:latest
+        env:
+        - name: LEADERSHIP_ENABLED
+          value: "true"
+        - name: LEADERSHIP_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # ...other environment variables...
+      serviceAccountName: openfga-sync
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openfga-sync
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openfga-sync-leader-election
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openfga-sync-leader-election
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openfga-sync-leader-election
+subjects:
+- kind: ServiceAccount
+  name: openfga-sync
+```
+
+### Helm Chart
+
+A Helm chart is available for easier Kubernetes deployments:
 
 ```bash
+# Add the helm repository
+helm repo add openfga-sync https://aaguiarz.github.io/openfga-sync
+
+# Install with custom values
+helm install openfga-sync openfga-sync/openfga-sync \
+  --set openfga.endpoint="https://api.fga.example.com" \
+  --set openfga.storeId="01HXXX-STORE-ID" \
+  --set backend.type="postgres" \
+  --set backend.dsn="postgres://user:pass@postgres:5432/openfga_sync"
+```
+
+### Cloud Platforms
+
+#### AWS ECS
+```json
+{
+  "family": "openfga-sync",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "openfga-sync",
+      "image": "openfga-sync:latest",
+      "memory": 512,
+      "cpu": 256,
+      "environment": [
+        {"name": "OPENFGA_ENDPOINT", "value": "https://api.fga.example.com"},
+        {"name": "OPENFGA_STORE_ID", "value": "01HXXX-STORE-ID"}
+      ],
+      "portMappings": [
+        {"containerPort": 8080, "protocol": "tcp"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/openfga-sync",
+          "awslogs-region": "us-east-1"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### Google Cloud Run
+```yaml
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: openfga-sync
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+    spec:
+      containers:
+      - image: gcr.io/PROJECT-ID/openfga-sync:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: OPENFGA_ENDPOINT
+          value: "https://api.fga.example.com"
+        - name: OPENFGA_STORE_ID
+          value: "01HXXX-STORE-ID"
+        resources:
+          limits:
+            memory: 512Mi
+            cpu: 500m
+```
+
+## 🛠️ Development
+
+### Prerequisites
+- **Go 1.23+** 
+- **Storage Backend**: PostgreSQL 12+ or SQLite 3.x
+- **OpenFGA Server**: Local or remote instance for testing
+
+### Local Development Setup
+
+```bash
+# Clone repository
+git clone https://github.com/aaguiarz/openfga-sync.git
+cd openfga-sync
+
 # Install dependencies
 go mod tidy
 
@@ -456,14 +881,14 @@ go test -v ./...
 # Run specific test suites
 go test ./config ./fetcher ./storage
 
-# Run demo examples
-go run examples/changes_demo.go
-go run examples/enhanced_demo/main.go
+# Build and run locally
+go build -o openfga-sync
+./openfga-sync -config config.example.yaml
 ```
 
-#### Testing
+### Testing
 
-The project includes comprehensive test suites:
+The project includes comprehensive test coverage:
 
 ```bash
 # Run all tests
@@ -472,272 +897,309 @@ go test ./...
 # Run tests with coverage
 go test -cover ./...
 
+# Generate coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+
 # Run benchmarks
+go test -bench=. ./storage
 go test -bench=. ./fetcher
 
-# Test configuration parsing
+# Test specific packages
 go test ./config -v
-
-# Test fetcher functionality
-go test ./fetcher -v
+go test ./storage -v -run TestStorageAdapter
 ```
 
-### OpenFGA Replication
+### Running Examples
 
-The OpenFGA storage adapter enables replication from one OpenFGA instance to another, supporting various scenarios such as backup, disaster recovery, and multi-region deployments.
+```bash
+# Basic OpenFGA changes demo
+go run examples/changes_demo/main.go
 
-#### Configuration Formats
+# Enhanced fetcher demo
+go run examples/enhanced_demo/main.go
 
-**Simple DSN Format:**
-```yaml
-backend:
-  type: "openfga"
-  dsn: "http://target-openfga:8080/target-store-id"
-  mode: "stateful"
+# SQLite demo
+go run examples/sqlite_demo/main.go
+
+# OpenFGA replication demo
+go run examples/openfga_demo/main.go
 ```
 
-**JSON DSN Format (Advanced):**
-```yaml
-backend:
-  type: "openfga"
-  dsn: |
-    {
-      "endpoint": "https://target-openfga.example.com",
-      "store_id": "01HTARGET-STORE-ID",
-      "token": "target-api-token",
-      "authorization_model_id": "01HMODEL-ID",
-      "request_timeout": "45s",
-      "max_retries": 5,
-      "retry_delay": "2s",
-      "batch_size": 250
-    }
-  mode: "stateful"
+### Code Organization
+
+```
+.
+├── main.go                 # Service entry point
+├── config/                 # Configuration management
+│   ├── config.go          # Configuration structures and parsing
+│   └── config_test.go     # Configuration tests
+├── fetcher/                # OpenFGA client
+│   ├── openfga.go         # Main fetcher implementation
+│   └── openfga_test.go    # Fetcher tests
+├── storage/                # Storage adapters
+│   ├── adapter.go         # Storage interface
+│   ├── postgres.go        # PostgreSQL implementation
+│   ├── sqlite.go          # SQLite implementation
+│   ├── openfga.go         # OpenFGA replication
+│   └── *_test.go          # Comprehensive test suite
+├── telemetry/              # Observability
+│   └── telemetry.go       # OpenTelemetry setup
+├── server/                 # HTTP server
+│   └── server.go          # Health checks and metrics
+├── metrics/                # Prometheus metrics
+│   └── metrics.go         # Metrics definitions
+└── examples/               # Usage examples
+    ├── changes_demo/       # Basic usage
+    ├── enhanced_demo/      # Advanced features
+    └── sqlite_demo/        # SQLite specific
 ```
 
-#### JSON DSN Parameters
+### Contributing
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `endpoint` | string | Required | Target OpenFGA API endpoint |
-| `store_id` | string | Required | Target store ID |
-| `token` | string | Optional | API token for authentication |
-| `authorization_model_id` | string | Optional | Specific model ID to use |
-| `request_timeout` | string | "30s" | Timeout for API requests |
-| `max_retries` | int | 3 | Maximum retry attempts |
-| `retry_delay` | string | "1s" | Delay between retries |
-| `batch_size` | int | 100 | Number of changes per batch |
+1. **Fork** the repository
+2. **Create** a feature branch: `git checkout -b feature-name`
+3. **Make** changes with comprehensive tests
+4. **Run** the test suite: `go test ./...`
+5. **Update** documentation for user-facing changes
+6. **Submit** a pull request
 
-#### Use Cases
+#### Code Standards
 
-**1. Backup and Disaster Recovery**
-```yaml
-# Primary → Backup replication
-backend:
-  type: "openfga"
-  dsn: "https://backup-region.openfga.example.com/01BACKUP-STORE-ID"
-  mode: "stateful"  # Maintain current state for quick failover
+- Follow Go conventions and `gofmt` formatting
+- Add comprehensive tests for new functionality
+- Update documentation for user-facing changes
+- Use structured logging with appropriate levels
+- Follow the existing error handling patterns
+- Add OpenTelemetry tracing for new operations
+
+#### Running Quality Checks
+
+```bash
+# Format code
+go fmt ./...
+
+# Run linter (install golangci-lint first)
+golangci-lint run
+
+# Check for security issues (install gosec first)
+gosec ./...
+
+# Check dependencies for vulnerabilities
+go list -json -deps ./... | nancy sleuth
 ```
 
-**2. Development/Staging Sync**
-```yaml
-# Production → Development replication
-backend:
-  type: "openfga"
-  dsn: "http://dev-openfga:8080/01DEV-STORE-ID"
-  mode: "changelog"  # Keep full audit trail for testing
-```
-
-**3. Cross-Cloud Migration**
-```yaml
-# Migration with custom settings
-backend:
-  type: "openfga"
-  dsn: |
-    {
-      "endpoint": "https://new-cloud.openfga.example.com",
-      "store_id": "01HNEW-STORE-ID",
-      "token": "migration-token",
-      "request_timeout": "120s",
-      "batch_size": 50
-    }
-  mode: "changelog"
-```
-
-**4. Multi-Region Active Replication**
-```yaml
-# High-performance replication
-backend:
-  type: "openfga"
-  dsn: |
-    {
-      "endpoint": "https://us-west.openfga.example.com",
-      "store_id": "01HUS-WEST-STORE-ID",
-      "batch_size": 500,
-      "max_retries": 10
-    }
-  mode: "stateful"
-```
-
-#### Features
-
-- **Dual Mode Support**: Both changelog and stateful modes
-- **Retry Logic**: Exponential backoff with configurable parameters
-- **Batch Processing**: Configurable batch sizes for optimal performance
-- **Authentication**: API token support for secure connections
-- **Health Monitoring**: Connection status and statistics
-- **Tuple Conversion**: Smart reconstruction of OpenFGA tuple keys
-- **Error Handling**: Graceful handling of network and API errors
-
-## Database Schema
-
-### openfga_changes table
-
-- `id`: Primary key
-- `user_key`: The user from the tuple
-- `relation`: The relation from the tuple
-- `object_key`: The object from the tuple
-- `operation`: The operation (WRITE, DELETE)
-- `timestamp`: When the change occurred
-- `change_type`: Type of change (always "tuple_change")
-- `created_at`: When the record was inserted
-
-### sync_state table
-
-- `id`: Primary key
-- `continuation_token`: Last processed continuation token
-- `updated_at`: When the token was last updated
-
-## Performance & Best Practices
-
-### Recommended Settings
-
-#### For High-Volume Environments
-```yaml
-service:
-  batch_size: 500
-  poll_interval: "1s"
-  max_retries: 5
-  rate_limit_delay: "10ms"
-  request_timeout: "60s"
-  max_retry_delay: "10s"
-```
-
-#### For Low-Latency Requirements
-```yaml
-service:
-  batch_size: 50
-  poll_interval: "100ms"
-  max_retries: 2
-  rate_limit_delay: "5ms"
-  request_timeout: "5s"
-```
-
-### Storage Mode Selection
-
-- **Use Changelog Mode** for:
-  - Compliance and audit requirements
-  - Change analysis and debugging
-  - Complete historical tracking
-  - Forensic analysis
-
-- **Use Stateful Mode** for:
-  - Performance-critical authorization queries
-  - Data replication to other systems
-  - Current state analysis
-  - Reduced storage requirements
-
-### Database Optimization
-
-#### PostgreSQL Settings
-```sql
--- Optimize for changelog mode
-CREATE INDEX idx_changelog_timestamp ON fga_changelog(timestamp DESC);
-CREATE INDEX idx_changelog_user ON fga_changelog(user_type, user_id);
-CREATE INDEX idx_changelog_object ON fga_changelog(object_type, object_id);
-
--- Optimize for stateful mode
-CREATE INDEX idx_tuples_user ON fga_tuples(user_type, user_id);
-CREATE INDEX idx_tuples_object ON fga_tuples(object_type, object_id);
-```
-
-## Troubleshooting
+## 🐛 Troubleshooting
 
 ### Common Issues
 
-#### Connection Problems
-```bash
-# Test OpenFGA connectivity
-curl https://api.openfga.example.com/stores/01HXXX-STORE-ID/changes
+#### 🔌 Connection Problems
 
-# Test database connectivity
-psql "postgres://user:pass@localhost:5432/openfga_sync" -c "SELECT 1;"
+**OpenFGA Connectivity:**
+```bash
+# Test OpenFGA API access
+curl -v "https://api.fga.example.com/stores/01HXXX-STORE-ID/changes"
+
+# Check store access with authentication
+curl -H "Authorization: Bearer YOUR-TOKEN" \
+     "https://api.fga.example.com/stores/01HXXX-STORE-ID/changes"
 ```
 
-#### High Memory Usage
-- Reduce `batch_size` in configuration
-- Enable `rate_limit_delay` to slow down processing
-- Monitor with `go tool pprof`
+**Database Connectivity:**
+```bash
+# Test PostgreSQL connection
+psql "postgres://user:pass@localhost:5432/openfga_sync" -c "SELECT 1;"
 
-#### Missing Changes
-- Check continuation token in `sync_state` table
-- Verify OpenFGA store ID is correct
-- Review logs for parsing errors
+# Test SQLite file access
+sqlite3 /path/to/data.db "SELECT 1;"
+```
+
+#### 📈 Performance Issues
+
+**High Memory Usage:**
+- Reduce `batch_size` in configuration (try 50-100)
+- Enable `rate_limit_delay` to slow down processing
+- Monitor with: `go tool pprof http://localhost:8080/debug/pprof/heap`
+
+**High CPU Usage:**
+- Increase `poll_interval` to reduce polling frequency
+- Reduce `batch_size` for smaller processing chunks
+- Check for infinite retry loops in logs
+
+**Slow Processing:**
+- Increase `batch_size` for better throughput
+- Reduce `rate_limit_delay` if API allows
+- Check database performance and indexing
+
+#### 📝 Data Issues
+
+**Missing Changes:**
+```bash
+# Check continuation token in sync_state table
+psql "postgres://..." -c "SELECT * FROM sync_state;"
+
+# Verify OpenFGA store ID is correct
+curl "https://api.fga.example.com/stores" | jq '.stores[].id'
+
+# Review logs for parsing errors
+./openfga-sync 2>&1 | grep -i error
+```
+
+**Duplicate Changes:**
+- Check for multiple service instances running
+- Verify leader election is enabled in Kubernetes
+- Check sync_state table for token corruption
+
+**Schema Issues:**
+```bash
+# Check table existence
+psql "postgres://..." -c "\dt"
+
+# Recreate tables (will lose data)
+psql "postgres://..." -c "DROP TABLE IF EXISTS fga_changelog, fga_tuples, sync_state;"
+# Restart service to recreate tables
+```
+
+#### 🔧 Configuration Issues
+
+**Invalid Configuration:**
+```bash
+# Validate configuration file
+./openfga-sync -config config.yaml -validate
+
+# Test with minimal configuration
+echo "openfga:
+  endpoint: http://localhost:8080
+  store_id: test
+backend:
+  type: sqlite
+  dsn: ':memory:'
+  mode: stateful" > test-config.yaml
+
+./openfga-sync -config test-config.yaml
+```
+
+**Environment Variable Issues:**
+```bash
+# List all environment variables
+env | grep -i openfga
+env | grep -i backend
+
+# Test environment variable parsing
+OPENFGA_ENDPOINT="http://test" \
+BACKEND_DSN="sqlite://:memory:" \
+./openfga-sync -validate
+```
 
 ### Debug Mode
 
-Enable debug logging for detailed information:
+Enable detailed logging for troubleshooting:
 
 ```yaml
 logging:
   level: "debug"
-  format: "json"
+  format: "json"  # or "text" for easier reading
 ```
 
-## Roadmap
+```bash
+# Run with debug logging
+LOG_LEVEL=debug ./openfga-sync
 
-### Planned Features
+# Filter specific components
+./openfga-sync 2>&1 | grep -i "fetcher\|storage"
+```
 
-- **Additional Storage Backends**
-  - MySQL support
-  - MongoDB support
-  - OpenFGA write-back mode
+### Getting Help
 
-- **High Availability**
-  - Kubernetes leader election
-  - Multi-region support
-  - Auto-failover
+1. **Check Logs**: Enable debug logging and review output
+2. **Validate Config**: Use `-validate` flag to check configuration
+3. **Test Components**: Use examples to test individual components
+4. **Review Documentation**: Check specific documentation files:
+   - [`CONFIGURATION.md`](CONFIGURATION.md) - Detailed configuration options
+   - [`OPENTELEMETRY.md`](OPENTELEMETRY.md) - OpenTelemetry setup
+   - [`QUICKSTART.md`](QUICKSTART.md) - Quick start guide
+5. **Report Issues**: Create GitHub issues with:
+   - Configuration (sanitized)
+   - Logs (with sensitive data removed)
+   - Environment details
+   - Expected vs actual behavior
 
-- **Enhanced Observability**
-  - OpenTelemetry tracing
-  - Custom dashboards
-  - Alerting rules
+## 📚 Documentation
 
-- **Performance**
-  - Concurrent processing
-  - Change deduplication
-  - Compression support
+- **[Configuration Guide](CONFIGURATION.md)** - Detailed configuration options
+- **[OpenTelemetry Setup](OPENTELEMETRY.md)** - Observability configuration
+- **[Quick Start Guide](QUICKSTART.md)** - Get started quickly
+- **[OpenFGA Implementation](OPENFGA_IMPLEMENTATION.md)** - OpenFGA specifics
+- **[SQLite Implementation](SQLITE_IMPLEMENTATION.md)** - SQLite specifics
+- **[HTTP Metrics](HTTP_METRICS_IMPLEMENTATION.md)** - Metrics details
 
-## Contributing
+## 🗺️ Roadmap
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes with tests
-4. Run the test suite: `go test ./...`
-5. Submit a pull request
+### 📅 Planned Features
 
-### Code Standards
+#### Storage Backends
+- **MySQL/MariaDB Support** - Enterprise-grade relational database
+- **MongoDB Support** - Document-based storage for flexible schemas
+- **Redis Support** - High-performance caching and pub/sub
+- **ClickHouse Support** - Analytics and time-series data
 
-- Follow Go conventions and best practices
-- Add tests for new functionality
-- Update documentation for user-facing changes
-- Use structured logging with appropriate levels
+#### High Availability
+- **✅ Leader Election** - Kubernetes-native HA (implemented)
+- **Multi-Region Support** - Cross-region replication and failover
+- **Auto-Failover** - Automatic failover between instances
+- **Load Balancing** - Request distribution across instances
 
-## License
+#### Enhanced Observability
+- **✅ OpenTelemetry Tracing** - Distributed tracing (implemented)
+- **Custom Dashboards** - Pre-built Grafana dashboards
+- **Alerting Rules** - Prometheus alerting configurations
+- **Log Aggregation** - Structured logging with correlation IDs
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+#### Performance & Scalability
+- **Concurrent Processing** - Parallel change processing
+- **Change Deduplication** - Intelligent duplicate detection
+- **Compression Support** - Reduce storage and network overhead
+- **Streaming API** - Real-time change streaming
 
-## Support
+#### Developer Experience
+- **Helm Charts** - Kubernetes deployment made easy
+- **Terraform Modules** - Infrastructure as code
+- **VS Code Extension** - Configuration and debugging support
+- **CLI Tools** - Management and troubleshooting utilities
 
-- **Documentation**: See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options
-- **Examples**: Check the `examples/` directory for usage examples
-- **Issues**: Report bugs and feature requests on GitHub Issues
+### 🚀 Contributing to Roadmap
+
+We welcome contributions and feature requests! Please:
+
+1. **Open an Issue** to discuss new features
+2. **Review the Codebase** to understand current architecture
+3. **Submit PRs** with comprehensive tests and documentation
+4. **Join Discussions** about future direction
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+### Getting Help
+
+- **📖 Documentation**: Start with this README and linked documentation
+- **🐛 Bug Reports**: [Create an issue](https://github.com/aaguiarz/openfga-sync/issues/new) with detailed information
+- **💡 Feature Requests**: [Open a discussion](https://github.com/aaguiarz/openfga-sync/discussions) about new features
+- **❓ Questions**: Use [GitHub Discussions](https://github.com/aaguiarz/openfga-sync/discussions) for general questions
+
+### Support Channels
+
+- **GitHub Issues**: Bug reports and technical issues
+- **GitHub Discussions**: General questions and feature discussions
+- **Documentation**: Comprehensive guides and examples
+- **Examples**: Working code examples in the `examples/` directory
+
+### Commercial Support
+
+For commercial support, consulting, or custom feature development, please contact the maintainers.
+
+---
+
+**Made with ❤️ for the OpenFGA community**
